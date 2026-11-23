@@ -105,19 +105,19 @@ func newModel(req *Request, dir string) *model {
 	for i := range m.qs {
 		m.qs[i].picked = map[int]bool{}
 	}
-	m.chat = newInput("Ask a follow-up…", 3)
-	m.notes = newInput("A note for the agent…", 4)
-	m.otherIn = newInput("Your answer…", 2)
-	m.reason = newInput("What is wrong with the question?", 5)
+	m.chat = newInput("Ask a follow-up…", 1, 8)
+	m.notes = newInput("A note for the agent…", 2, 10)
+	m.otherIn = newInput("Your answer…", 1, 6)
+	m.reason = newInput("What is wrong with the question?", 3, 12)
 	return m
 }
 
-func newInput(placeholder string, height int) textarea.Model {
+func newInput(placeholder string, minH, maxH int) textarea.Model {
 	t := textarea.New()
 	t.Placeholder = placeholder
 	t.ShowLineNumbers = false
 	t.Prompt = ""
-	t.SetHeight(height)
+	t.DynamicHeight, t.MinHeight, t.MaxHeight, t.MaxContentHeight = true, minH, maxH, 10000
 	t.CharLimit = 0
 	t.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("shift+enter", "alt+enter", "ctrl+j"))
 	return t
@@ -143,7 +143,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
-		m.resize()
 		return m, nil
 	case tea.BackgroundColorMsg:
 		m.dark = msg.IsDark()
@@ -258,36 +257,64 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		return m.toInput(k)
 	}
 	q := &m.qs[m.cur]
+	multi := m.req.Questions[m.cur].MultiSelect
 	n := len(m.req.Questions[m.cur].Options) + 1
 	switch s {
 	case "tab":
 		return m.toggleTab()
-	case "up", "k":
+	case "up":
 		if m.scr == scrQuestion && q.cursor > 0 {
 			q.cursor--
 			q.showMore = false
 		}
-	case "down", "j":
+	case "down":
 		if m.scr == scrQuestion && q.cursor < n-1 {
 			q.cursor++
 			q.showMore = false
 		}
-	case "enter", "space":
-		if m.scr == scrReview {
-			return m.submit()
+	case "space":
+		if m.scr == scrQuestion {
+			return m.pick(m.cur, q.cursor)
 		}
-		return m.pick(m.cur, q.cursor)
+	case "enter":
+		switch {
+		case m.scr == scrReview:
+			return m.submit()
+		case m.scr != scrQuestion:
+		case multi:
+			return m.next()
+		default:
+			return m.choose(q.cursor)
+		}
 	case "right":
 		return m.next()
-	case "left", "esc":
+	case "left":
 		return m.back()
 	default:
-		if len(s) == 1 && s[0] >= '1' && s[0] <= '9' && int(s[0]-'1') < n && m.scr == scrQuestion {
-			q.cursor = int(s[0] - '1')
-			return m.pick(m.cur, q.cursor)
+		if m.scr != scrQuestion {
+			return nil
+		}
+		if len(s) == 1 && s[0] >= '1' && s[0] <= '9' && int(s[0]-'1') < n {
+			if multi {
+				return m.pick(m.cur, int(s[0]-'1'))
+			}
+			return m.choose(int(s[0] - '1'))
+		}
+		if t := k.Key().Text; t != "" && t != " " {
+			cmd := m.startNote(m.cur) // typing on the options starts a note
+			m.notes.InsertString(t)
+			return cmd
 		}
 	}
 	return nil
+}
+
+// choose picks a single-select option and moves on, unless it needs typed text first.
+func (m *model) choose(oi int) tea.Cmd {
+	if cmd := m.pick(m.cur, oi); m.focus == fOther {
+		return cmd
+	}
+	return m.next()
 }
 
 func (m *model) toggleTab() tea.Cmd {
@@ -337,6 +364,9 @@ func (m *model) submitInput() tea.Cmd {
 		m.threadOff = 0
 		return m.ask(m.cur, "chat", fmt.Sprintf("[Q%d: %s] %s", m.cur+1, m.header(m.cur), text))
 	case fOther:
+		if !m.req.Questions[m.cur].MultiSelect && strings.TrimSpace(m.otherIn.Value()) != "" {
+			return tea.Batch(m.setFocus(fOptions), m.next())
+		}
 		return m.setFocus(fOptions)
 	case fNote:
 		m.finishNote()
@@ -657,6 +687,15 @@ func (m *model) click(msg tea.MouseClickMsg) tea.Cmd {
 			return m.action(id)
 		}
 	}
+	if m.scr == scrQuestion && (m.askTab || (m.wide() && msg.Mouse().X >= m.leftWidth())) {
+		return m.setFocus(fChat)
+	}
+	if m.scr == scrQuestion && m.focus != fOptions {
+		if m.focus == fNote {
+			m.finishNote()
+		}
+		return m.setFocus(fOptions)
+	}
 	return nil
 }
 
@@ -779,12 +818,17 @@ func (m *model) wheel(msg tea.MouseWheelMsg) {
 	}
 }
 
-func (m *model) resize() {
-	cw := m.chatWidth()
-	m.chat.SetWidth(cw - 4)
-	m.otherIn.SetWidth(min(m.leftWidth()-10, 90))
-	m.notes.SetWidth(min(m.w-16, 92))
-	m.reason.SetWidth(min(m.w-16, 92))
+// choiceGlyph draws Nerd Font Material icons, the same family tick uses.
+func choiceGlyph(multi, on bool) string {
+	switch {
+	case multi && on:
+		return "\U000F0135" // checkbox-marked-outline
+	case multi:
+		return "\U000F0131" // checkbox-blank-outline
+	case on:
+		return "\U000F043E" // radiobox-marked
+	}
+	return "\U000F043D" // radiobox-blank
 }
 
 func (m *model) wide() bool     { return m.w >= 130 }
@@ -983,37 +1027,86 @@ func fmtDur(d time.Duration) string {
 	return fmt.Sprintf("%d s", max(0, int(d.Seconds())))
 }
 
+// footItem is one footer element; short is used when the full footer does not fit.
+type footItem struct {
+	id, label, short string
+	kind             int // 0 link, 1 button, 2 muted text
+}
+
 func (m *model) viewFooter() string {
-	p := m.pal()
-	var left, right string
+	var left, right []footItem
 	switch m.scr {
 	case scrQuestion:
-		left = "  " + link("sendback", "Send this question back")
-		nextLabel := "Review →"
+		left = []footItem{{"sendback", "Send this question back", "Send back", 0}, {"", m.focusHint(), "", 2}}
+		next := footItem{"next", "Review →", "Review →", 1}
 		if m.cur+1 < len(m.qs) {
-			nextLabel = "Next: " + m.header(m.cur+1) + " →"
+			next = footItem{"next", "Next: " + m.header(m.cur+1) + " →", "Next →", 1}
 		}
-		right = m.button("next", nextLabel)
 		if m.cur > 0 {
-			right = link("back", "‹ Back") + "   " + right
+			right = append(right, footItem{"back", "‹ Back", "‹", 0})
 		}
+		right = append(right, next)
 	case scrReview:
-		left = "  " + link("sendback", "Send a question back instead")
-		n := m.answeredCount()
-		send := m.button("submit", fmt.Sprintf("Send %d answers ✓", len(m.qs)))
-		if n < len(m.qs) {
-			send = p.muted.Render(fmt.Sprintf("Answer all %d questions to send", len(m.qs)))
+		left = []footItem{{"sendback", "Send a question back instead", "Send back", 0}}
+		right = []footItem{{"back", "‹ Back", "‹", 0}}
+		if n := len(m.qs); m.answeredCount() < n {
+			right = append(right, footItem{"", fmt.Sprintf("Answer all %d questions to send", n), "Answer all to send", 2})
+		} else {
+			right = append(right, footItem{"submit", fmt.Sprintf("Send %d answers ✓", n), "Send ✓", 1})
 		}
-		right = link("back", "‹ Back") + "   " + send
 	case scrReframe:
-		right = link("reason-cancel", "Cancel") + "   " + m.button("reason-send", "Send back ↩")
+		right = []footItem{{"reason-cancel", "Cancel", "Cancel", 0}, {"reason-send", "Send back ↩", "Send back ↩", 1}}
 	case scrExpired:
-		right = link("close", "Close") + "   " + m.button("copyall", "Copy answers and discussion")
+		right = []footItem{{"close", "Close", "Close", 0}, {"copyall", "Copy answers and discussion", "Copy all", 1}}
 	}
 	if m.flash != "" {
-		left += "  " + p.warn.Render(m.flash)
+		left = append(left, footItem{"", m.flash, "", 3})
 	}
-	return m.rule() + "\n" + spread(m.w-1, left, right+" ")
+	// Try full labels, then drop hints, then short labels, so the main button always shows.
+	for stage := 0; stage < 3; stage++ {
+		width := func(items []footItem, dropHints bool) (w int) {
+			for _, it := range items {
+				l := it.label
+				if stage == 2 && it.short != "" {
+					l = it.short
+				}
+				if stage >= 1 && dropHints && it.kind == 2 {
+					continue
+				}
+				w += lipgloss.Width(l) + 3
+			}
+			return w
+		}
+		if width(left, true)+width(right, false)+4 <= m.w || stage == 2 {
+			return m.rule() + "\n" + spread(m.w-1, "  "+m.renderFoot(left, stage, true), m.renderFoot(right, stage, false)+" ")
+		}
+	}
+	return ""
+}
+
+func (m *model) renderFoot(items []footItem, stage int, dropHints bool) string {
+	p := m.pal()
+	var parts []string
+	for _, it := range items {
+		l := it.label
+		if stage == 2 && it.short != "" {
+			l = it.short
+		}
+		switch it.kind {
+		case 0:
+			parts = append(parts, link(it.id, l))
+		case 1:
+			parts = append(parts, m.button(it.id, l))
+		case 2:
+			if stage >= 1 && dropHints {
+				continue
+			}
+			parts = append(parts, p.muted.Render(l))
+		case 3:
+			parts = append(parts, p.warn.Render(l))
+		}
+	}
+	return strings.Join(parts, "   ")
 }
 
 func (m *model) stepper() string {
@@ -1077,15 +1170,7 @@ func (m *model) viewOptions(w int) string {
 		}
 		label, rec := stripRecommended(label)
 		on := st.picked[i]
-		glyph := "○"
-		switch {
-		case q.MultiSelect && on:
-			glyph = "☑"
-		case q.MultiSelect:
-			glyph = "☐"
-		case on:
-			glyph = "◉"
-		}
+		glyph := choiceGlyph(q.MultiSelect, on)
 		if on {
 			glyph = p.accent.Render(glyph)
 		}
@@ -1106,7 +1191,7 @@ func (m *model) viewOptions(w int) string {
 		}
 		if i == st.cursor && preview != "" {
 			pv := strings.Split(m.markdown(preview, w-4), "\n")
-			const capLines = 14
+			capLines := max(6, min(14, m.h/4))
 			if len(pv) > capLines && !st.showMore {
 				pv = append(pv[:capLines], link("showmore", fmt.Sprintf("Show %d more lines", len(pv)-capLines)))
 			} else if len(pv) > capLines {
@@ -1118,7 +1203,7 @@ func (m *model) viewOptions(w int) string {
 			}
 		}
 		if i == n && on {
-			block = append(block, markLines("other-box", indent(m.boxed(m.otherIn, m.focus == fOther), 2)))
+			block = append(block, markLines("other-box", indent(m.boxed(&m.otherIn, m.focus == fOther, w-6), 2)))
 		}
 		text := strings.Join(block, "\n")
 		if i == st.cursor && m.focus == fOptions {
@@ -1130,7 +1215,7 @@ func (m *model) viewOptions(w int) string {
 	}
 	if m.editNote == m.cur && m.focus == fNote {
 		b.WriteString(p.muted.Render("Note for the agent") + "  " + p.accent.Render("editing") + "\n")
-		b.WriteString(markLines("note-box", m.boxed(m.notes, true)) + "\n")
+		b.WriteString(markLines("note-box", m.boxed(&m.notes, true, w)) + "\n")
 		b.WriteString(spread(w, "", link("note-clear", "Clear")+"   "+mark("note-done", "[ Done ]")) + "\n")
 	} else if st.note != "" {
 		who := "your note"
@@ -1145,7 +1230,9 @@ func (m *model) viewOptions(w int) string {
 	return b.String()
 }
 
-func (m *model) boxed(t textarea.Model, focused bool) string {
+// boxed draws an input in a rounded border exactly w cells wide.
+func (m *model) boxed(t *textarea.Model, focused bool, w int) string {
+	t.SetWidth(max(w-4, 10))
 	ld := lipgloss.LightDark(m.dark)
 	c := ld(lipgloss.Color("7"), lipgloss.Color("240"))
 	if focused {
@@ -1187,7 +1274,7 @@ func (m *model) viewThread(w, h int) string {
 		}
 		b.WriteString("\n\n")
 	}
-	input := markLines("chat-box", m.boxed(m.chat, m.focus == fChat))
+	input := markLines("chat-box", m.boxed(&m.chat, m.focus == fChat, w))
 	hint := p.muted.Render("Enter sends · Shift+Enter new line") + "   " + mark("send-chat", lipgloss.NewStyle().Bold(true).Render("[ Send ]"))
 	footer := input + "\n" + spread(w, "", hint)
 	avail := h - lipgloss.Height(head) - lipgloss.Height(footer) - 1
@@ -1230,17 +1317,13 @@ func (m *model) viewReview() string {
 		if ans == "" {
 			ans = p.warn.Render("▲ not answered yet")
 		} else {
-			glyph := "◉"
-			if m.req.Questions[i].MultiSelect {
-				glyph = "☑"
-			}
-			ans = p.accent.Render(glyph) + " " + ans
+			ans = p.accent.Render(choiceGlyph(m.req.Questions[i].MultiSelect, true)) + " " + ans
 		}
 		b.WriteString("    " + ans + "\n\n")
 		switch {
 		case m.editNote == i && m.focus == fNote:
 			b.WriteString("    " + p.muted.Render("Note for the agent  ") + p.accent.Render("editing") + "\n")
-			b.WriteString(markLines("note-box", indent(m.boxed(m.notes, true), 4)) + "\n")
+			b.WriteString(markLines("note-box", indent(m.boxed(&m.notes, true, w-4), 4)) + "\n")
 			b.WriteString(spread(w, "", link("note-rewrite", "Rewrite with assistant")+"   "+link("note-clear", "Clear")+"   "+mark("note-done", "[ Done ]")) + "\n")
 		case st.drafting:
 			b.WriteString(spread(w, "    "+p.muted.Render("Note for the agent  ")+p.muted.Italic(true).Render("drafting…"), "") + "\n")
@@ -1269,7 +1352,7 @@ func (m *model) viewReframe() string {
 	b.WriteString(p.muted.Render("The question") + "\n")
 	b.WriteString(bar(p.muted, "│", wrap(m.req.Questions[m.cur].Question, w-2)) + "\n\n")
 	b.WriteString(lipgloss.NewStyle().Bold(true).Render("What is wrong with it?") + "\n")
-	b.WriteString(markLines("reason-box", m.boxed(m.reason, m.focus == fReason)) + "\n")
+	b.WriteString(markLines("reason-box", m.boxed(&m.reason, m.focus == fReason, w)) + "\n")
 	draft := ""
 	switch {
 	case m.qs[m.cur].drafting:
@@ -1307,4 +1390,17 @@ func (m *model) viewExpired() string {
 	}
 	b.WriteString(p.muted.Render(strings.Repeat("─", w)) + "\n")
 	return m.center(b.String(), w)
+}
+
+// focusHint says how to move between the options and the text boxes.
+func (m *model) focusHint() string {
+	switch {
+	case m.focus != fOptions:
+		return "Esc: back to options"
+	case m.wide():
+		return "Tab: chat · type to add a note"
+	case m.askTab:
+		return "Tab: question"
+	}
+	return "Tab: ask about it · type to add a note"
 }
