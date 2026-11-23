@@ -79,6 +79,11 @@ type model struct {
 	sel        *selection
 	selDone    bool
 	frame      []string // last rendered lines, for copying a selection
+	under      screen   // the screen an overlay is drawn over
+	showKeys   bool
+	blurred    bool
+	flashAt    time.Time
+	modalFrom  int // clickables before this index sit under an open overlay
 	scr        screen
 	cur        int // question in focus
 	qs         []qstate
@@ -130,6 +135,7 @@ func newInput(placeholder string, minH, maxH int) textarea.Model {
 	t.CharLimit = 0
 	t.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("shift+enter", "alt+enter", "ctrl+j"))
 	t.SetStyles(inputStyles(systemDark()))
+	t.SetVirtualCursor(false) // the terminal's own blinking cursor shows where typing goes
 	return t
 }
 
@@ -168,7 +174,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.md = map[string]string{}
 		return m, nil
+	case tea.FocusMsg:
+		m.blurred = false
+		return m, nil
+	case tea.BlurMsg:
+		m.blurred = true
+		return m, nil
 	case tickMsg:
+		if m.flash != "" && time.Since(m.flashAt) > 4*time.Second {
+			m.flash = ""
+		}
 		if !m.expired && m.timeLeft() <= 0 || !m.expired && !alive(m.req.HookPID) {
 			m.expired = true
 			m.scr = scrExpired
@@ -196,6 +211,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.MouseMotionMsg:
+		if mo := msg.Mouse(); mo.Button == tea.MouseNone {
+			hoverID = m.hit(mo.X, mo.Y)
+			return m, nil
+		}
 		if mo := msg.Mouse(); m.sel != nil && !m.selDone {
 			m.sel.hx, m.sel.hy, m.sel.dragged = mo.X, mo.Y, m.sel.dragged || mo.X != m.sel.ax || mo.Y != m.sel.ay
 		}
@@ -212,7 +231,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.selDone = true
 		if text := m.selectedText(); text != "" {
 			copyText(text)
-			m.flash = fmt.Sprintf("Copied %d characters · Cmd+V pastes into the note or chat", len([]rune(text)))
+			m.flashAt, m.flash = time.Now(), fmt.Sprintf("Copied %d characters · Cmd+V pastes into the note or chat", len([]rune(text)))
 		}
 		return m, nil
 	case tea.MouseWheelMsg:
@@ -294,11 +313,19 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		}
 		return nil
 	}
+	if m.showKeys {
+		m.showKeys = false
+		return nil
+	}
+	if s == "?" && m.input() == nil {
+		m.showKeys = true
+		return nil
+	}
 	if in := m.input(); in != nil {
 		switch s {
 		case "esc":
 			if m.focus == fReason {
-				m.scr = scrQuestion
+				m.scr = m.under
 			}
 			return m.setFocus(fOptions)
 		case "pgup", "pgdown":
@@ -564,7 +591,7 @@ func (m *model) back() tea.Cmd {
 	case scrReview:
 		return m.goTo(len(m.qs) - 1)
 	case scrReframe:
-		m.scr = scrQuestion
+		m.scr = m.under
 		return m.setFocus(fOptions)
 	case scrQuestion:
 		if m.cur > 0 {
@@ -623,7 +650,7 @@ func (m *model) submit() tea.Cmd {
 	}
 	if m.drafting() && !m.sendAnyway {
 		m.sendAnyway = true
-		m.flash = "Notes are still drafting. Send again to send without them."
+		m.flashAt, m.flash = time.Now(), "Notes are still drafting. Send again to send without them."
 		return nil
 	}
 	resp := Response{Kind: "answer", Answers: map[string]string{}, Annotations: map[string]map[string]string{}}
@@ -660,7 +687,7 @@ func (m *model) sendBack() tea.Cmd {
 
 func (m *model) finish(resp Response) tea.Cmd {
 	if err := writeJSON(filepath.Join(m.dir, "response.json"), resp); err != nil {
-		m.flash = "Could not save the answer: " + err.Error()
+		m.flashAt, m.flash = time.Now(), "Could not save the answer: "+err.Error()
 		return nil
 	}
 	recordHistory(m.req, resp, m)
@@ -681,14 +708,14 @@ func (m *model) switchModel() tea.Cmd {
 		return nil
 	}
 	if m.agent.Busy() {
-		m.flash = "Wait for the assistant to finish before switching models."
+		m.flashAt, m.flash = time.Now(), "Wait for the assistant to finish before switching models."
 		return nil
 	}
 	sid := m.agent.sessionID
 	m.agent.Stop()
 	a, err := startAgent(m.req, next, sid)
 	if err != nil {
-		m.flash = "Could not switch models: " + err.Error()
+		m.flashAt, m.flash = time.Now(), "Could not switch models: "+err.Error()
 		m.agent = nil
 		return nil
 	}
@@ -733,7 +760,7 @@ func (m *model) copyAll() {
 		b.WriteString("\n")
 	}
 	copyText(b.String())
-	m.flash = "Copied. Paste it into the agent's terminal."
+	m.flashAt, m.flash = time.Now(), "Copied. Paste it into the agent's terminal."
 }
 
 func or(s, d string) string {
@@ -745,15 +772,25 @@ func or(s, d string) string {
 
 // ---------- mouse ----------
 
+// hit returns the clickable id under a cell, ignoring anything beneath an open overlay.
+func (m *model) hit(x, y int) string {
+	for i := len(clickables) - 1; i >= m.modalFrom; i-- {
+		if z := zone.Get(clickables[i]); z != nil && !z.IsZero() && x >= z.StartX && x <= z.EndX && y >= z.StartY && y <= z.EndY {
+			return clickables[i]
+		}
+	}
+	return ""
+}
+
 func (m *model) click(msg tea.MouseClickMsg) tea.Cmd {
 	if msg.Mouse().Button != tea.MouseLeft {
 		return nil
 	}
-	for i := len(clickables) - 1; i >= 0; i-- {
-		id := clickables[i]
-		if zone.Get(id).InBounds(msg) {
-			return m.action(id)
-		}
+	if id := m.hit(msg.Mouse().X, msg.Mouse().Y); id != "" {
+		return m.action(id)
+	}
+	if m.modalFrom > 0 {
+		return nil // a click outside an overlay does nothing
 	}
 	if m.scr == scrQuestion && (m.askTab || (m.wide() && msg.Mouse().X >= m.leftWidth())) {
 		return m.setFocus(fChat)
@@ -783,7 +820,7 @@ func (m *model) action(id string) tea.Cmd {
 		return m.goTo(a)
 	case sscan(id, "sendback-%d", &a):
 		m.cur = a
-		m.scr = scrReframe
+		m.under, m.scr = m.scr, scrReframe
 		return m.setFocus(fReason)
 	case sscan(id, "starter-%d", &a):
 		m.chat.SetValue(starters[a])
@@ -843,7 +880,7 @@ func (m *model) action(id string) tea.Cmd {
 	case "submit":
 		return m.submit()
 	case "sendback":
-		m.scr = scrReframe
+		m.under, m.scr = m.scr, scrReframe
 		if m.cur >= len(m.qs) {
 			m.cur = 0
 		}
@@ -860,8 +897,10 @@ func (m *model) action(id string) tea.Cmd {
 	case "reason-send":
 		return m.sendBack()
 	case "reason-cancel":
-		m.scr = scrQuestion
+		m.scr = m.under
 		return m.setFocus(fOptions)
+	case "keys":
+		m.showKeys = !m.showKeys
 	case "copyall":
 		m.copyAll()
 	case "close":
@@ -928,14 +967,21 @@ func (m *model) pal() palette {
 	st := func(light, dark string) lipgloss.Style {
 		return lipgloss.NewStyle().Foreground(ld(lipgloss.Color(light), lipgloss.Color(dark)))
 	}
+	accent := st("4", "12")
+	onAccent := lipgloss.NewStyle().Bold(true).Background(ld(lipgloss.Color("4"), lipgloss.Color("12"))).Foreground(ld(lipgloss.Color("15"), lipgloss.Color("0")))
+	if m.blurred { // the pane recedes while you work elsewhere
+		accent = st("8", "245")
+		onAccent = onAccent.Background(ld(lipgloss.Color("8"), lipgloss.Color("240")))
+	}
+	linkColor = accent.GetForeground()
 	return palette{
-		accent:   st("4", "12"),
+		accent:   accent,
 		muted:    st("8", "245"),
 		ok:       st("2", "10"),
 		warn:     st("3", "11"),
 		bad:      st("1", "9"),
 		text:     lipgloss.NewStyle(),
-		onAccent: lipgloss.NewStyle().Bold(true).Background(ld(lipgloss.Color("4"), lipgloss.Color("12"))).Foreground(ld(lipgloss.Color("15"), lipgloss.Color("0"))),
+		onAccent: onAccent,
 	}
 }
 
@@ -966,9 +1012,33 @@ func markLines(id, block string) string {
 	return strings.Join(lines, "\n")
 }
 
-func link(id, s string) string { return mark(id, lipgloss.NewStyle().Underline(true).Render(s)) }
+// hoverID is the clickable under the mouse pointer, set from motion events.
+var hoverID string
 
-func (m *model) button(id, s string) string { return mark(id, m.pal().onAccent.Render(" "+s+" ")) }
+func hovered(id string) bool {
+	base, _, _ := strings.Cut(id, "#")
+	h, _, _ := strings.Cut(hoverID, "#")
+	return h != "" && h == base
+}
+
+// link is accent text at rest and underlined under the pointer, so the screen stays quiet.
+func link(id, s string) string {
+	st := lipgloss.NewStyle().Foreground(linkColor)
+	if hovered(id) {
+		st = st.Underline(true)
+	}
+	return mark(id, st.Render(s))
+}
+
+var linkColor color.Color = lipgloss.Color("4")
+
+func (m *model) button(id, s string) string {
+	st := m.pal().onAccent
+	if hovered(id) {
+		st = st.Underline(true)
+	}
+	return mark(id, st.Render(" "+s+" "))
+}
 
 func (m *model) markdown(s string, width int) string {
 	key := fmt.Sprintf("%d|%v|%s", width, m.dark, s)
@@ -1062,7 +1132,11 @@ func (m *model) View() tea.View {
 	case scrReview:
 		body = m.viewReview()
 	case scrReframe:
-		body = m.viewReframe()
+		if m.under == scrReview {
+			body = m.viewReview()
+		} else {
+			body = m.viewQuestion()
+		}
 	case scrExpired:
 		body = m.viewExpired()
 	}
@@ -1070,9 +1144,32 @@ func (m *model) View() tea.View {
 	footer := m.viewFooter()
 	bh := m.h - lipgloss.Height(header) - lipgloss.Height(footer)
 	body, _ = clip(body, 0, bh)
-	content := zone.Scan(lipgloss.JoinVertical(lipgloss.Left, header, body, footer))
+	page := lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+	m.modalFrom = 0
+	switch {
+	case m.scr == scrReframe:
+		m.modalFrom = len(clickables)
+		page = m.overlay(page, m.viewReframe())
+	case m.showKeys:
+		m.modalFrom = len(clickables)
+		page = m.overlay(page, m.viewKeys())
+	}
+	if m.flash != "" {
+		page = m.toast(page, m.flash)
+	}
+	content := zone.Scan(page)
+	content, v.Cursor = m.placeCursor(content)
 	m.frame = strings.Split(content, "\n")
 	v.SetContent(m.highlight(content))
+	v.ReportFocus = true
+	v.MouseMode = tea.MouseModeAllMotion
+	if left := m.timeLeft(); !m.expired {
+		state := tea.ProgressBarDefault
+		if left < 5*time.Minute {
+			state = tea.ProgressBarWarning
+		}
+		v.ProgressBar = &tea.ProgressBar{State: state, Value: max(1, int(100*left/hookTimeout))}
+	}
 	return v
 }
 
@@ -1102,7 +1199,7 @@ func (m *model) viewHeader() string {
 			if on {
 				return p.onAccent.Render(" " + title + " ")
 			}
-			return lipgloss.NewStyle().Underline(true).Foreground(p.muted.GetForeground()).Render(title)
+			return lipgloss.NewStyle().Foreground(p.muted.GetForeground()).Render(title + " ⇥")
 		}
 		qt, at := chip("Answer", !m.askTab), chip("Ask about it", m.askTab)
 		if n := m.qs[m.cur].unread; n > 0 {
@@ -1146,8 +1243,6 @@ func (m *model) viewFooter() string {
 		} else {
 			right = append(right, footItem{"submit", fmt.Sprintf("Send %d answers ✓", n), "Send ✓", 1})
 		}
-	case scrReframe:
-		right = []footItem{{"reason-cancel", "Cancel", "Cancel", 0}, {"reason-send", "Send back ↩", "Send back ↩", 1}}
 	case scrExpired:
 		right = []footItem{{"close", "Close", "Close", 0}, {"copyall", "Copy answers and discussion", "Copy all", 1}}
 	}
@@ -1160,10 +1255,8 @@ func (m *model) viewFooter() string {
 		stage = 2
 	}
 	r := m.renderFoot(right, stage, false)
-	left := m.keyBar(m.w - lipgloss.Width(r) - 6)
-	if m.flash != "" {
-		left = m.pal().warn.Render(m.flash)
-	}
+	keys := link("keys", "? Keys")
+	left := keys + "   " + m.keyBar(m.w-lipgloss.Width(r)-16)
 	return m.rule() + "\n" + spread(m.w-1, "  "+left, r+" ")
 }
 
@@ -1279,7 +1372,7 @@ func (m *model) viewQuestion() string {
 // paneHead is a pane's title chip (focus marker and click target) over a rule that is accent when focused.
 func (m *model) paneHead(w int, id, title string, focused bool, right string) string {
 	p := m.pal()
-	chip := lipgloss.NewStyle().Underline(true).Foreground(p.muted.GetForeground()).Render(title)
+	chip := lipgloss.NewStyle().Underline(hovered(id)).Foreground(p.muted.GetForeground()).Render(title + "  ⇥")
 	rule := p.muted.Render(strings.Repeat("─", w))
 	if focused {
 		chip = p.onAccent.Render(" " + title + " ")
@@ -1339,10 +1432,14 @@ func (m *model) viewOptions(w int) string {
 		if on {
 			glyph = p.accent.Render(glyph)
 		}
-		lbl := label
+		lst := lipgloss.NewStyle()
 		if i == st.cursor || on {
-			lbl = lipgloss.NewStyle().Bold(true).Render(label)
+			lst = lst.Bold(true)
 		}
+		if hovered(fmt.Sprintf("opt-%d-%d", m.cur, i)) {
+			lst = lst.Underline(true)
+		}
+		lbl := lst.Render(label)
 		head := p.muted.Render(fmt.Sprintf("%d", i+1)) + " " + glyph + " " + lbl
 		if rec {
 			head += "   " + p.ok.Render("Recommended")
@@ -1423,12 +1520,16 @@ func (m *model) noteRow(w int, cursor, focused bool) string {
 // boxed draws an input in a rounded border exactly w cells wide.
 func (m *model) boxed(t *textarea.Model, focused bool, w int) string {
 	t.SetWidth(max(w-4, 10))
+	view := t.View()
+	if focused && t.Focused() {
+		view = cursorMark + view
+	}
 	ld := lipgloss.LightDark(m.dark)
 	c := ld(lipgloss.Color("7"), lipgloss.Color("240"))
 	if focused {
 		c = ld(lipgloss.Color("4"), lipgloss.Color("12"))
 	}
-	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(c).Padding(0, 1).Render(t.View())
+	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(c).Padding(0, 1).Render(view)
 }
 
 func (m *model) viewThread(w, h int) string {
@@ -1542,9 +1643,9 @@ func (m *model) viewReview() string {
 
 func (m *model) viewReframe() string {
 	p := m.pal()
-	w := min(m.w-6, 92)
+	w := min(m.w-12, 80)
 	var b strings.Builder
-	b.WriteString("\n\n" + lipgloss.NewStyle().Bold(true).Render("Send this question back") + "\n")
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render(icBack+"  Send this question back") + "\n")
 	b.WriteString(p.muted.Render(wrap("Use this when the question itself is wrong. The agent reads your reason and asks again.", w)) + "\n\n")
 	b.WriteString(p.muted.Render("The question") + "\n")
 	b.WriteString(bar(p.muted, "│", wrap(m.req.Questions[m.cur].Question, w-2)) + "\n\n")
@@ -1557,14 +1658,15 @@ func (m *model) viewReframe() string {
 	case len(m.qs[m.cur].thread) > 0:
 		draft = link("reason-draft", "Draft from my discussion")
 	}
-	b.WriteString(spread(w, "", draft) + "\n\n")
+	b.WriteString(spread(w, "", draft) + "\n")
 	box := "☐"
 	if m.inclSum {
 		box = p.accent.Render("☑")
 	}
 	b.WriteString(mark("reason-incl", box+" Include my note from the discussion") + "\n")
-	b.WriteString(p.muted.Render("Your answers to the other questions are kept.") + "\n")
-	return m.center(b.String(), w)
+	b.WriteString(p.muted.Render(wrap("The whole set goes back: your answers to the other questions travel with it, so the agent can keep them when it asks again.", w)) + "\n\n")
+	b.WriteString(spread(w, "", link("reason-cancel", "Cancel")+"    "+m.button("reason-send", "Send back ↩")))
+	return b.String()
 }
 
 func (m *model) viewExpired() string {
@@ -1665,4 +1767,87 @@ func (m *model) selectedText() string {
 		}
 	}
 	return strings.TrimSpace(strings.Join(out, "\n"))
+}
+
+// cursorMark is a zero-width OSC that tags where the focused text box starts; placeCursor
+// turns it into the terminal's real cursor and strips it.
+const cursorMark = "\x1b]7777;huddle-cursor\x07"
+
+func (m *model) placeCursor(content string) (string, *tea.Cursor) {
+	lines := strings.Split(content, "\n")
+	for y, l := range lines {
+		i := strings.Index(l, cursorMark)
+		if i < 0 {
+			continue
+		}
+		lines[y] = l[:i] + l[i+len(cursorMark):]
+		in := m.input()
+		if in == nil || m.blurred {
+			break
+		}
+		c := in.Cursor()
+		if c == nil {
+			break
+		}
+		c.X += ansi.StringWidth(l[:i])
+		c.Y += y
+		c.Shape, c.Blink, c.Color = tea.CursorBar, true, m.pal().accent.GetForeground()
+		return strings.Join(lines, "\n"), c
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
+// overlay draws a card centred over the page; what lies beneath stays visible around it.
+func (m *model) overlay(page, card string) string {
+	ld := lipgloss.LightDark(m.dark)
+	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(ld(lipgloss.Color("7"), lipgloss.Color("240"))).Padding(min(1, max(0, (m.h-lipgloss.Height(card)-4)/2)), 3).Render(card)
+	faded := strings.Split(page, "\n") // the page recedes behind the card
+	for i, l := range faded {
+		faded[i] = m.pal().muted.Faint(true).Render(ansi.Strip(l))
+	}
+	page = strings.Join(faded, "\n")
+	return splice(page, box, max(0, (m.w-lipgloss.Width(box))/2), max(1, (m.h-lipgloss.Height(box))/2))
+}
+
+// toast shows a short message in the top-right corner for a few seconds.
+func (m *model) toast(page, msg string) string {
+	ld := lipgloss.LightDark(m.dark)
+	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(ld(lipgloss.Color("3"), lipgloss.Color("11"))).Padding(0, 1).Render(wrap(msg, min(48, m.w-8)))
+	return splice(page, box, max(0, m.w-lipgloss.Width(box)-2), 2)
+}
+
+// splice writes block over page at column x, row y.
+func splice(page, block string, x, y int) string {
+	lines := strings.Split(page, "\n")
+	for i, bl := range strings.Split(block, "\n") {
+		r := y + i
+		if r >= len(lines) {
+			break
+		}
+		l := lines[r]
+		if w := lipgloss.Width(l); w < x {
+			l += strings.Repeat(" ", x-w)
+		}
+		lines[r] = ansi.Truncate(l, x, "") + "\x1b[m" + bl + "\x1b[m" + ansi.TruncateLeft(l, x+lipgloss.Width(bl), "")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m *model) viewKeys() string {
+	p := m.pal()
+	rows := [][2]string{
+		{"↑ ↓", "move between options"}, {"⏎ or 1-9", "choose and go to the next question"},
+		{"space", "toggle (pick-any questions)"}, {"← →", "previous / next question"},
+		{"tab", "switch between Answer and Ask about it"}, {"any letter", "start a message to the assistant"},
+		{"/", "write a note for the agent"}, {"⏎ / ⇧⏎", "send / new line in a text box"},
+		{"esc", "back to the options"}, {"pgup pgdn", "scroll the discussion"},
+		{"drag", "select text; it is copied when you let go"}, {"?", "this list"},
+	}
+	var b strings.Builder
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Keys") + p.muted.Render("   everything is also clickable") + "\n\n")
+	for _, r := range rows {
+		b.WriteString(lipgloss.NewStyle().Bold(true).Width(12).Render(r[0]) + p.muted.Render(r[1]) + "\n")
+	}
+	b.WriteString("\n" + p.muted.Render("Press any key or click Close.") + "   " + link("keys", "Close"))
+	return b.String()
 }
