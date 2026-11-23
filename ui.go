@@ -16,6 +16,7 @@ import (
 	"charm.land/glamour/v2"
 	"charm.land/glamour/v2/styles"
 	"charm.land/lipgloss/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	zone "github.com/lrstanley/bubblezone/v2"
 )
@@ -116,7 +117,7 @@ const otherLabel = "Something else…"
 var clickables []string
 
 func newModel(req *Request, dir string) *model {
-	m := &model{req: req, dir: dir, dark: systemDark(), editNote: -1, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot)), model: "sonnet", reqs: map[int]*pending{}, md: map[string]string{}, inclSum: true}
+	m := &model{req: req, dir: dir, dark: true, editNote: -1, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot)), model: "sonnet", reqs: map[int]*pending{}, md: map[string]string{}, inclSum: true}
 	m.qs = make([]qstate, len(req.Questions))
 	for i := range m.qs {
 		m.qs[i].picked = map[int]bool{}
@@ -142,12 +143,16 @@ func newInput(placeholder string, minH, maxH int) textarea.Model {
 	t.DynamicHeight, t.MinHeight, t.MaxHeight, t.MaxContentHeight = true, minH, maxH, 10000
 	t.CharLimit = 0
 	t.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("shift+enter", "alt+enter", "ctrl+j"))
-	t.SetStyles(inputStyles(systemDark()))
+	t.SetStyles(inputStyles(true))
 	t.SetVirtualCursor(false) // the terminal's own blinking cursor shows where typing goes
 	return t
 }
 
-func (m *model) Init() tea.Cmd { return tea.Batch(tick(), tea.RequestBackgroundColor) }
+// Init asks Rex for its colours and subscribes to its light/dark switches (DEC mode 2031),
+// so huddle always paints with the theme Rex is showing right now.
+func (m *model) Init() tea.Cmd {
+	return tea.Batch(tick(), tea.RequestBackgroundColor, tea.Raw(ansi.SetModeLightDark+ansi.RequestLightDarkReport))
+}
 
 func tick() tea.Cmd { return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }) }
 
@@ -175,6 +180,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
 		return m, cmd
+	case uv.DarkColorSchemeEvent, uv.LightColorSchemeEvent:
+		return m, tea.RequestBackgroundColor // the theme changed: fetch its real background
 	case tea.BackgroundColorMsg:
 		m.dark, m.bg = msg.IsDark(), msg.Color
 		for _, t := range []*textarea.Model{&m.chat, &m.notes, &m.otherIn, &m.reason} {
@@ -1020,12 +1027,6 @@ func inputStyles(dark bool) textarea.Styles {
 	return s
 }
 
-// systemDark guesses the theme from macOS appearance until the terminal reports its background.
-func systemDark() bool {
-	out, _ := exec.Command("defaults", "read", "-g", "AppleInterfaceStyle").Output()
-	return strings.Contains(string(out), "Dark")
-}
-
 func mark(id, s string) string { clickables = append(clickables, id); return zone.Mark(id, s) }
 
 // markLines marks each line on its own, so clipping a tall block never leaves a zone unclosed.
@@ -1079,6 +1080,14 @@ func (m *model) markdown(s string, width int) string {
 	cfg.Document.BlockPrefix, cfg.Document.BlockSuffix = "", ""
 	cfg.Document.StylePrimitive.Color = nil
 	cfg.CodeBlock.Margin = &zero
+	// inline code: the palette's accent colour, no band, so it suits light and dark alike
+	cfg.Code.BackgroundColor = nil
+	cfg.Code.Prefix, cfg.Code.Suffix = "", ""
+	accent := "12"
+	if !m.dark {
+		accent = "4"
+	}
+	cfg.Code.Color = &accent
 	r, err := glamour.NewTermRenderer(glamour.WithStyles(cfg), glamour.WithWordWrap(max(width, 20)))
 	out := s
 	if err == nil {
