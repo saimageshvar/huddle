@@ -5,9 +5,11 @@ import (
 	"encoding/base64"
 	"fmt"
 	"image"
+	"image/color"
 	_ "image/gif"
 	_ "image/jpeg"
 	"image/png"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -149,4 +151,86 @@ func imagesIn(text string) []string {
 		}
 	}
 	return out
+}
+
+// icon places a generated PNG (keyed by name) as cols x rows cells.
+func (k *kitty) icon(name string, data func() []byte, cols, rows int) (send, block string) {
+	key := "icon:" + name
+	id, ok := k.ids[key]
+	if !ok {
+		if k.next > 255 {
+			return "", ""
+		}
+		id = k.next
+		k.next++
+		k.ids[key] = id
+		send = transmit(id, cols, rows, data())
+	}
+	return send, placeholders(id, cols, rows)
+}
+
+// markerPNG draws a radio button (circle) or checkbox (rounded square), 4x supersampled for
+// smooth edges. A chosen radio gets a filled inner dot; a chosen checkbox fills with a tick.
+func markerPNG(multi, on bool, line, accent, tick color.RGBA) []byte {
+	const n, ss = 64, 4
+	big := n * ss
+	cover := func(x, y float64) color.RGBA { // the colour at a point, in 0..1 space
+		cx, cy := x-0.5, y-0.5
+		if !multi {
+			d := math.Hypot(cx, cy)
+			switch {
+			case on && d <= 0.20:
+				return accent
+			case d <= 0.40 && d >= 0.33:
+				if on {
+					return accent
+				}
+				return line
+			}
+			return color.RGBA{}
+		}
+		// rounded square from 0.12 to 0.88, corner radius 0.14
+		inside := func(inset float64) bool {
+			lo, hi, r := 0.12+inset, 0.88-inset, 0.14-inset
+			qx := math.Max(math.Max(lo+r-x, x-(hi-r)), 0)
+			qy := math.Max(math.Max(lo+r-y, y-(hi-r)), 0)
+			return x >= lo && x <= hi && y >= lo && y <= hi && math.Hypot(qx, qy) <= r
+		}
+		if on {
+			if !inside(0) {
+				return color.RGBA{}
+			}
+			if segDist(x, y, 0.28, 0.52, 0.44, 0.67) < 0.055 || segDist(x, y, 0.44, 0.67, 0.73, 0.35) < 0.055 {
+				return tick
+			}
+			return accent
+		}
+		if inside(0) && !inside(0.065) {
+			return line
+		}
+		return color.RGBA{}
+	}
+	img := image.NewRGBA(image.Rect(0, 0, n, n))
+	for py := range n {
+		for px := range n {
+			var r, g, b, a int
+			for sy := range ss {
+				for sx := range ss {
+					c := cover((float64(px*ss+sx)+0.5)/float64(big), (float64(py*ss+sy)+0.5)/float64(big))
+					r, g, b, a = r+int(c.R)*int(c.A)/255, g+int(c.G)*int(c.A)/255, b+int(c.B)*int(c.A)/255, a+int(c.A)
+				}
+			}
+			s := ss * ss
+			img.Set(px, py, color.RGBA{uint8(r / s), uint8(g / s), uint8(b / s), uint8(a / s)})
+		}
+	}
+	var out bytes.Buffer
+	_ = png.Encode(&out, img)
+	return out.Bytes()
+}
+
+func segDist(px, py, ax, ay, bx, by float64) float64 {
+	dx, dy := bx-ax, by-ay
+	t := math.Max(0, math.Min(1, ((px-ax)*dx+(py-ay)*dy)/(dx*dx+dy*dy)))
+	return math.Hypot(px-(ax+t*dx), py-(ay+t*dy))
 }

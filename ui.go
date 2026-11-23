@@ -1007,19 +1007,6 @@ func (m *model) wheel(msg tea.MouseWheelMsg) {
 	}
 }
 
-// choiceGlyph draws circle (single choice) and square (multiple choice) markers; chosen ones are filled.
-func choiceGlyph(multi, on bool) string {
-	switch {
-	case multi && on:
-		return "\U000F0132" // checkbox-marked: a filled square with a tick
-	case multi:
-		return "\U000F0131" // checkbox-blank-outline: an empty square
-	case on:
-		return "\U000F012F" // checkbox-blank-circle: a filled circle
-	}
-	return "\U000F0130" // checkbox-blank-circle-outline: an empty circle
-}
-
 func (m *model) wide() bool { return m.w >= 120 }
 func (m *model) leftWidth() int {
 	if m.wide() {
@@ -1536,10 +1523,7 @@ func (m *model) viewOptions(w int) string {
 		}
 		label, rec := stripRecommended(label)
 		on := st.picked[i]
-		glyph := choiceGlyph(q.MultiSelect, on)
-		if on || i == st.cursor {
-			glyph = p.accent.Render(glyph)
-		}
+		glyph := m.marker(q.MultiSelect, on)
 		lst := lipgloss.NewStyle()
 		if i == st.cursor || on {
 			lst = lst.Bold(true)
@@ -1742,7 +1726,7 @@ func (m *model) viewReview() string {
 		if ans == "" {
 			b.WriteString(indent(p.warn.Render("– Skipped. The agent will see this as unanswered."), 3) + "\n")
 		} else {
-			g := p.accent.Render(choiceGlyph(m.req.Questions[i].MultiSelect, true)) + " "
+			g := m.marker(m.req.Questions[i].MultiSelect, true) + " "
 			b.WriteString(indent(g+strings.ReplaceAll(wrap(m.answerShown(i), w-6), "\n", "\n  "), 3) + "\n")
 		}
 		switch {
@@ -1783,10 +1767,7 @@ func (m *model) viewReframe() string {
 	b.WriteString(p.muted.Render(wrap("Tick the questions that are wrong and say why. The agent will ask again.", w)) + "\n\n")
 	for i, q := range m.req.Questions {
 		st := m.qs[i]
-		box := "\U000F0131"
-		if st.flagged {
-			box = p.accent.Render("\U000F0132")
-		}
+		box := m.marker(true, st.flagged)
 		title := lipgloss.NewStyle().Bold(st.flagged).Render(m.header(i))
 		b.WriteString(mark(fmt.Sprintf("flag-%d", i), box+" "+title) + p.muted.Render("  "+ansi.Truncate(q.Question, w-lipgloss.Width(m.header(i))-6, "…")) + "\n")
 		switch {
@@ -1808,10 +1789,7 @@ func (m *model) viewReframe() string {
 		}
 		b.WriteString("\n")
 	}
-	box := "\U000F0131"
-	if m.inclSum {
-		box = p.accent.Render("\U000F0132")
-	}
+	box := m.marker(true, m.inclSum)
 	b.WriteString(mark("reason-incl", box+" Include my notes for the agent") + "\n")
 	b.WriteString(p.muted.Render(wrap("Your answers to the other questions go back too, so the agent can keep them.", w)) + "\n\n")
 	b.WriteString(spread(w, "", link("reason-cancel", "Cancel")+"    "+m.button("reason-send", "Send back")))
@@ -1883,7 +1861,7 @@ func (m *model) selectedText() string {
 	var out []string
 	for y, l := range m.frame {
 		if a, b, ok := m.sel.span(y, m.w+2*m.padX); ok {
-			line := strings.TrimSpace(ansi.Strip(ansi.Cut(l, a, b)))
+			line := strings.TrimSpace(blankImages(ansi.Strip(ansi.Cut(l, a, b))))
 			for _, deco := range []string{"▌", "▎", "│"} { // speaker and cursor bars are decoration
 				line = strings.TrimSpace(strings.TrimPrefix(line, deco))
 			}
@@ -2088,4 +2066,23 @@ func (m *model) pad(page string) string {
 	}
 	blank := strings.Repeat("\n", m.padY)
 	return blank + strings.Join(lines, "\n") + blank
+}
+
+// marker is a radio button (single choice) or checkbox (pick several) drawn as a small image
+// two cells wide, so it reads larger than any font glyph. Colours follow the light/dark theme.
+func (m *model) marker(multi, on bool) string {
+	line, accent := color.RGBA{0x8c, 0x95, 0x9f, 0xff}, color.RGBA{0x09, 0x69, 0xda, 0xff}
+	if m.dark {
+		line, accent = color.RGBA{0x6e, 0x76, 0x81, 0xff}, color.RGBA{0x44, 0x93, 0xf8, 0xff}
+	}
+	white := color.RGBA{0xff, 0xff, 0xff, 0xff}
+	name := fmt.Sprintf("marker-%v-%v-%v", multi, on, m.dark)
+	send, block := m.img.icon(name, func() []byte { return markerPNG(multi, on, line, accent, white) }, 2, 1)
+	if send != "" {
+		m.toSend = append(m.toSend, send)
+		if prog != nil {
+			go prog.Send(flushImages{})
+		}
+	}
+	return block
 }
