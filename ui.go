@@ -60,6 +60,7 @@ type qstate struct {
 	drafting    bool
 	draftedAt   int // len(thread) when the note was last drafted
 	showMore    bool
+	visited     bool   // left once, so an empty answer reads as skipped
 	flagged     bool   // ticked in the Send back card as a wrong question
 	reason      string // why it is wrong
 }
@@ -580,6 +581,7 @@ func (m *model) draftNote(q int) tea.Cmd {
 
 func (m *model) goTo(i int) tea.Cmd {
 	cmd := m.draftNote(m.cur)
+	m.qs[m.cur].visited = true
 	m.cur, m.scr, m.leftOff, m.threadOff = i, scrQuestion, 0, 0
 	m.qs[i].unread = 0
 	return tea.Batch(cmd, m.setFocus(fOptions))
@@ -611,6 +613,7 @@ func (m *model) back() tea.Cmd {
 }
 
 func (m *model) review() tea.Cmd {
+	m.qs[m.cur].visited = true
 	cmds := []tea.Cmd{m.setFocus(fOptions)}
 	for i := range m.qs {
 		cmds = append(cmds, m.draftNote(i))
@@ -1000,10 +1003,12 @@ func (m *model) pal() palette {
 		return lipgloss.NewStyle().Foreground(ld(lipgloss.Color(light), lipgloss.Color(dark)))
 	}
 	accent := st("4", "12")
-	onAccent := lipgloss.NewStyle().Bold(true).Background(ld(lipgloss.Color("4"), lipgloss.Color("12"))).Foreground(ld(lipgloss.Color("15"), lipgloss.Color("0")))
+	// reverse video: the accent becomes the fill and the label takes the terminal's background,
+	// which reads in any theme (Rex's light "bright white" is grey, so a fixed white would not)
+	onAccent := lipgloss.NewStyle().Bold(true).Reverse(true).Foreground(ld(lipgloss.Color("4"), lipgloss.Color("12")))
 	if m.blurred { // the pane recedes while you work elsewhere
 		accent = st("8", "245")
-		onAccent = onAccent.Background(ld(lipgloss.Color("8"), lipgloss.Color("240")))
+		onAccent = onAccent.Foreground(ld(lipgloss.Color("8"), lipgloss.Color("240")))
 	}
 	linkColor = accent.GetForeground()
 	return palette{
@@ -1080,6 +1085,7 @@ func (m *model) markdown(s string, width int) string {
 	cfg.Document.BlockPrefix, cfg.Document.BlockSuffix = "", ""
 	cfg.Document.StylePrimitive.Color = nil
 	cfg.CodeBlock.Margin = &zero
+	cfg.CodeBlock.Chroma, cfg.CodeBlock.Theme = nil, ""
 	// inline code: the palette's accent colour, no band, so it suits light and dark alike
 	cfg.Code.BackgroundColor = nil
 	cfg.Code.Prefix, cfg.Code.Suffix = "", ""
@@ -1209,7 +1215,10 @@ func (m *model) rule() string { return m.pal().muted.Render(strings.Repeat("─"
 
 func (m *model) viewHeader() string {
 	p := m.pal()
-	left := " " + p.accent.Bold(true).Render("huddle") + "  " + filepath.Base(m.req.Cwd)
+	left := " " + p.accent.Bold(true).Render("huddle")
+	if repo := filepath.Base(m.req.Cwd); repo != "huddle" {
+		left += "  " + repo
+	}
 	if m.req.Branch != "" {
 		left += p.muted.Render(" · ") + m.req.Branch
 	}
@@ -1259,7 +1268,6 @@ func (m *model) viewFooter() string {
 	var right []footItem
 	switch m.scr {
 	case scrQuestion:
-		right = append(right, footItem{"sendback", icBack + " Send back", icBack, 0})
 		if m.cur > 0 {
 			right = append(right, footItem{"back", "‹ Back", "‹", 0})
 		}
@@ -1269,10 +1277,10 @@ func (m *model) viewFooter() string {
 		}
 		right = append(right, footItem{"next", label, label, 1})
 	case scrReview:
-		right = []footItem{{"sendback", icBack + " Send back", icBack, 0}, {"back", "‹ Back", "‹", 0}}
+		right = []footItem{{"back", "‹ Back", "‹", 0}}
 		label := fmt.Sprintf("Send %d answers ✓", len(m.qs))
 		if skip := len(m.qs) - m.answeredCount(); skip > 0 {
-			label = fmt.Sprintf("Send, skipping %d ✓", skip)
+			label = fmt.Sprintf("Send · %d skipped →", skip)
 		}
 		right = append(right, footItem{"submit", label, "Send ✓", 1})
 	}
@@ -1286,7 +1294,10 @@ func (m *model) viewFooter() string {
 	}
 	r := m.renderFoot(right, stage, false)
 	keys := link("keys", "? Keys")
-	left := keys + "   " + m.keyBar(m.w-lipgloss.Width(r)-16)
+	if m.scr == scrQuestion || m.scr == scrReview {
+		keys += "   " + m.pal().muted.Render(link("sendback", icBack+" Send questions back…"))
+	}
+	left := keys + "   " + m.keyBar(m.w-lipgloss.Width(r)-lipgloss.Width(keys)-8)
 	return m.rule() + "\n" + spread(m.w-1, "  "+left, r+" ")
 }
 
@@ -1300,13 +1311,13 @@ func (m *model) keyBar(w int) string {
 	case m.scr == scrReview:
 		hints = []keyHint{{"submit", "⏎", "send"}, {"", "←", "back"}}
 	case m.scr != scrQuestion:
-		hints = []keyHint{{"", "⏎", "send"}, {"", "esc", "cancel"}}
+		hints = []keyHint{{"", "⏎", "send"}, {"", "esc", "back"}}
 	case m.focus == fChat:
-		hints = []keyHint{{"send-chat", "⏎", "send"}, {"", "⇧⏎", "newline"}, {"", "pgup/dn", "scroll"}, {"kb-esc", "esc", "options"}}
+		hints = []keyHint{{"send-chat", "⏎", "send"}, {"", "⇧⏎", "newline"}, {"", "pgup/dn", "scroll"}, {"kb-esc", "esc", "back"}}
 	case m.focus == fNote:
-		hints = []keyHint{{"note-done", "⏎", "done"}, {"", "⇧⏎", "newline"}, {"kb-esc", "esc", "done"}}
+		hints = []keyHint{{"note-done", "⏎", "done"}, {"", "⇧⏎", "newline"}, {"kb-esc", "esc", "back"}}
 	case m.focus == fOther:
-		hints = []keyHint{{"", "⏎", "done"}, {"kb-esc", "esc", "options"}}
+		hints = []keyHint{{"", "⏎", "done"}, {"kb-esc", "esc", "back"}}
 	case m.req.Questions[m.cur].MultiSelect:
 		hints = []keyHint{{"", "↑↓", "move"}, {"", "space", "toggle"}, {"next", "⏎", "next"}, {"kb-tab", "tab", "ask"}, {"kb-note", "/", "note"}}
 	default:
@@ -1368,6 +1379,8 @@ func (m *model) stepper() string {
 			s = p.accent.Render("●") + " " + lipgloss.NewStyle().Bold(true).Render(label)
 		case done:
 			s = p.ok.Render("✓") + " " + p.muted.Render(label)
+		case i < len(m.qs) && m.qs[i].visited:
+			s = p.muted.Render("– " + label)
 		default:
 			s = p.muted.Render("○ " + label)
 		}
@@ -1480,7 +1493,7 @@ func (m *model) viewOptions(w int) string {
 		block := []string{mark(fmt.Sprintf("opt-%d-%d#0", m.cur, i), head)}
 		if desc != "" {
 			for j, l := range strings.Split(wrap(desc, w-6), "\n") {
-				block = append(block, mark(fmt.Sprintf("opt-%d-%d#%d", m.cur, i, j+1), "    "+p.muted.Render(l)))
+				block = append(block, mark(fmt.Sprintf("opt-%d-%d#%d", m.cur, i, j+1), "    "+l))
 			}
 		}
 		if i == st.cursor && preview != "" {
@@ -1535,6 +1548,9 @@ func (m *model) noteRow(w int, cursor, focused bool) string {
 		head := p.accent.Render(icNote) + " " + lipgloss.NewStyle().Bold(true).Render("Note for the agent")
 		box := markLines("note-box", m.boxed(&m.notes, true, w-2))
 		acts := link("note-clear", icClear+" Clear") + "    " + mark("note-done", p.accent.Bold(true).Render(icDone+" Done"))
+		if len(st.thread) > 0 {
+			acts = link("note-rewrite", icBot+" Rewrite with assistant") + "    " + acts
+		}
 		return bar(p.accent, "▌", head+"\n"+box+"\n"+spread(w-2, "", acts)) + "\n"
 	}
 	if st.note == "" {
@@ -1558,9 +1574,9 @@ func (m *model) boxed(t *textarea.Model, focused bool, w int) string {
 		view = cursorMark + view
 	}
 	ld := lipgloss.LightDark(m.dark)
-	c := ld(lipgloss.Color("7"), lipgloss.Color("240"))
+	c := ld(lipgloss.Color("8"), lipgloss.Color("240"))
 	if focused {
-		c = ld(lipgloss.Color("4"), lipgloss.Color("12"))
+		c = m.pal().accent.GetForeground()
 	}
 	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(c).Padding(0, 1).Render(view)
 }
@@ -1642,6 +1658,7 @@ func (m *model) viewReview() string {
 		b.WriteString("\n\n")
 		acts := link(fmt.Sprintf("change-%d", i), "Change")
 		b.WriteString(spread(w, p.muted.Render(fmt.Sprintf("%d  ", i+1))+lipgloss.NewStyle().Bold(true).Render(m.header(i)), acts) + "\n")
+		b.WriteString(indent(p.muted.Render(ansi.Truncate(m.req.Questions[i].Question, w-4, "…")), 3) + "\n")
 		ans := m.answerText(i)
 		if ans == "" {
 			b.WriteString(indent(p.muted.Render("– skipped · the agent is told you chose not to answer"), 3) + "\n")
@@ -1653,14 +1670,14 @@ func (m *model) viewReview() string {
 		case m.editNote == i && m.focus == fNote:
 			head := p.accent.Render(icNote) + " " + lipgloss.NewStyle().Bold(true).Render("Note for the agent")
 			box := markLines("note-box", m.boxed(&m.notes, true, w-3))
-			acts := link("note-rewrite", icBot+" Rewrite") + "    " + link("note-clear", icClear+" Clear") + "    " + mark("note-done", p.accent.Bold(true).Render(icDone+" Done"))
+			acts := link("note-rewrite", icBot+" Rewrite with assistant") + "    " + link("note-clear", icClear+" Clear") + "    " + mark("note-done", p.accent.Bold(true).Render(icDone+" Done"))
 			b.WriteString("\n" + indent(head+"\n"+box+"\n"+spread(w-3, "", acts), 3) + "\n")
 		case st.drafting:
 			b.WriteString(indent(p.muted.Render(icNote+" ")+p.accent.Render(m.spin.View())+p.muted.Italic(true).Render(" drafting a note from your discussion…"), 3) + "\n")
 		case st.note != "":
-			head := p.muted.Render(icNote + " Note")
+			head := p.muted.Render(icNote+" Note") + "  " + p.muted.Italic(true).Render("yours")
 			if st.noteByAgent {
-				head += "  " + p.muted.Render(icBot+" drafted")
+				head = p.muted.Render(icNote+" Note") + "  " + p.muted.Italic(true).Render(icBot+" drafted by the assistant")
 			}
 			head += "   " + p.muted.Render(link(fmt.Sprintf("edit-%d", i), "Edit"))
 			body := p.muted.Render("│") + " " + strings.ReplaceAll(wrap(st.note, w-8), "\n", "\n"+p.muted.Render("│")+" ")
@@ -1859,11 +1876,11 @@ func splice(page, block string, x, y int) string {
 func (m *model) viewKeys() string {
 	p := m.pal()
 	rows := [][2]string{
-		{"↑ ↓", "move between options"}, {"⏎ or 1-9", "choose and go to the next question"},
+		{"↑ ↓", "move between options"}, {"⏎ or a number", "choose and go to the next question"},
 		{"space", "toggle (pick-any questions)"}, {"← →", "previous / next question"},
 		{"tab", "switch between Answer and Ask about it"}, {"any letter", "start a message to the assistant"},
 		{"/", "write a note for the agent"}, {"⏎ / ⇧⏎", "send / new line in a text box"},
-		{"esc", "back to the options"}, {"pgup pgdn", "scroll the discussion"},
+		{"esc", "back (keeps what you typed)"}, {"pgup pgdn", "scroll the discussion"},
 		{"drag", "select text; it is copied when you let go"}, {"?", "this list"},
 	}
 	var b strings.Builder
