@@ -88,6 +88,7 @@ type model struct {
 	toSend     []string // image data waiting to go to the terminal
 	bigImage   string   // the image opened large, "" when none
 	bodyH      int      // rows between header and footer in the current frame
+	padX, padY int      // outer margin around everything
 	under      screen   // the screen an overlay is drawn over
 	showKeys   bool
 	flashAt    time.Time
@@ -176,7 +177,12 @@ func waitAgent(a *Agent) tea.Cmd {
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.w, m.h = msg.Width, msg.Height
+		// an outer margin so nothing presses against the pane's edges
+		m.padX, m.padY = 2, 1
+		if msg.Width < 90 {
+			m.padX = 1
+		}
+		m.w, m.h = msg.Width-2*m.padX, msg.Height-2*m.padY
 		return m, nil
 	case spinner.TickMsg:
 		if !m.anyLive() && !m.drafting() {
@@ -220,12 +226,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseClickMsg:
 		mo := msg.Mouse()
 		if mo.Button == tea.MouseLeft {
-			m.sel = &selection{ax: mo.X, ay: mo.Y, hx: mo.X, hy: mo.Y, press: msg, maxX: m.w}
+			m.sel = &selection{ax: mo.X, ay: mo.Y, hx: mo.X, hy: mo.Y, press: msg, minX: m.padX, maxX: m.padX + m.w}
 			if m.scr == scrQuestion && m.wide() {
-				if mo.X >= m.leftWidth() {
-					m.sel.minX = m.leftWidth() + 1
+				if mo.X-m.padX >= m.leftWidth() {
+					m.sel.minX = m.padX + m.leftWidth() + 1
 				} else {
-					m.sel.maxX = m.leftWidth()
+					m.sel.maxX = m.padX + m.leftWidth()
 				}
 			}
 			m.selDone = false
@@ -851,7 +857,7 @@ func (m *model) click(msg tea.MouseClickMsg) tea.Cmd {
 	if m.modalFrom > 0 {
 		return nil // a click outside an overlay does nothing
 	}
-	if m.scr == scrQuestion && (m.askTab || (m.wide() && msg.Mouse().X >= m.leftWidth())) {
+	if m.scr == scrQuestion && (m.askTab || (m.wide() && msg.Mouse().X-m.padX >= m.leftWidth())) {
 		return m.setFocus(fChat)
 	}
 	if m.scr == scrQuestion && m.focus != fOptions {
@@ -993,7 +999,7 @@ func (m *model) wheel(msg tea.MouseWheelMsg) {
 		}
 		return
 	}
-	inThread := m.askTab || (m.wide() && mouse.X >= m.leftWidth())
+	inThread := m.askTab || (m.wide() && mouse.X-m.padX >= m.leftWidth())
 	if m.scr == scrQuestion && inThread {
 		m.threadOff = max(0, m.threadOff-d)
 	} else {
@@ -1228,7 +1234,7 @@ func (m *model) View() tea.View {
 	if m.flash != "" {
 		page = m.toast(page, m.flash)
 	}
-	content := zone.Scan(page)
+	content := zone.Scan(m.pad(page))
 	content, v.Cursor = m.placeCursor(content)
 	m.frame = strings.Split(content, "\n")
 	v.SetContent(m.highlight(content))
@@ -1688,9 +1694,10 @@ func (m *model) viewThread(w, h int) string {
 	if len(st.thread) == 0 {
 		m.chat.Placeholder = "Ask about this question"
 	}
-	input := markLines("chat-box", m.boxed(&m.chat, m.focus == fChat, w)) + m.thumbsFor(m.chat.Value(), w-2)
+	// a pasted image previews small here, so the chat pane keeps its height and its buttons
+	input := markLines("chat-box", m.boxed(&m.chat, m.focus == fChat, w)) + m.thumbsFor(m.chat.Value(), w-2, 4)
 	footer := input + "\n" + spread(w, "", mark("send-chat", p.accent.Bold(true).Render(icSend+" Send")))
-	avail := h - lipgloss.Height(head) - lipgloss.Height(footer) - 1
+	avail := max(2, h-lipgloss.Height(head)-lipgloss.Height(footer)-1)
 	lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
 	if len(st.thread) == 0 {
 		avail = min(avail, len(lines)+1)
@@ -1863,7 +1870,7 @@ func (m *model) highlight(content string) string {
 	lines := strings.Split(content, "\n")
 	rev := lipgloss.NewStyle().Reverse(true)
 	for y, l := range lines {
-		a, b, ok := m.sel.span(y, m.w)
+		a, b, ok := m.sel.span(y, m.w+2*m.padX)
 		if !ok {
 			continue
 		}
@@ -1875,7 +1882,7 @@ func (m *model) highlight(content string) string {
 func (m *model) selectedText() string {
 	var out []string
 	for y, l := range m.frame {
-		if a, b, ok := m.sel.span(y, m.w); ok {
+		if a, b, ok := m.sel.span(y, m.w+2*m.padX); ok {
 			line := strings.TrimSpace(ansi.Strip(ansi.Cut(l, a, b)))
 			for _, deco := range []string{"▌", "▎", "│"} { // speaker and cursor bars are decoration
 				line = strings.TrimSpace(strings.TrimPrefix(line, deco))
@@ -2028,9 +2035,13 @@ func (m *model) thumbs(paths []string, maxCols, maxRows int) string {
 }
 
 // thumbsFor shows thumbnails of any images pasted into a text box, under it.
-func (m *model) thumbsFor(text string, w int) string {
+func (m *model) thumbsFor(text string, w int, rows ...int) string {
+	maxRows := 8
+	if len(rows) > 0 {
+		maxRows = rows[0]
+	}
 	if paths := imagesIn(text); len(paths) > 0 {
-		return "\n" + m.thumbs(paths, w, 8)
+		return "\n" + m.thumbs(paths, w, maxRows)
 	}
 	return ""
 }
@@ -2066,4 +2077,15 @@ func blankImages(s string) string {
 		}
 		return r
 	}, s)
+}
+
+// pad surrounds the page with the outer margin.
+func (m *model) pad(page string) string {
+	side := strings.Repeat(" ", m.padX)
+	lines := strings.Split(page, "\n")
+	for i, l := range lines {
+		lines[i] = side + l
+	}
+	blank := strings.Repeat("\n", m.padY)
+	return blank + strings.Join(lines, "\n") + blank
 }
