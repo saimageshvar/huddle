@@ -5,7 +5,6 @@ import (
 
 	"encoding/json"
 	"fmt"
-	"github.com/charmbracelet/x/ansi"
 	"io"
 	"os"
 	"os/exec"
@@ -93,7 +92,6 @@ func runHook() {
 	if err != nil {
 		return
 	}
-	defer markAsking(input.Questions[0].Question)()
 	// The pane is created beside the asking session (so it lands in that tab), then floated over
 	// the tab like a modal. rex prints the new block id first; it stays out of the hook's output.
 	cmd := exec.Command("rex", "run", "-b", block, "--split=right", "--ratio", "60", "--focus=false",
@@ -222,41 +220,4 @@ func writeJSON(path string, v any) error {
 		return err
 	}
 	return os.WriteFile(path, b, 0o600)
-}
-
-// markAsking adds a "blocked: question" status record to the asking Claude's own pane (the hook
-// shares its terminal), so that pane reads as waiting rather than working. It returns the undo.
-func markAsking(question string) func() {
-	tty, err := askingTTY()
-	if err != nil {
-		return func() {}
-	}
-	_, _ = tty.WriteString(ansi.SetProgramStatus(ansi.ProgramStatus{
-		ID: "huddle", State: ansi.ProgramStateBlocked, Kind: ansi.ProgramStatusKindQuestion,
-		App: "huddle", Title: "Question waiting in huddle", Message: question}))
-	return func() {
-		_, _ = tty.WriteString(ansi.ClearProgramStatusID("huddle"))
-		tty.Close()
-	}
-}
-
-// askingTTY opens the terminal of the Claude that runs this hook: hooks get no controlling
-// terminal, so walk up the parent processes to the first one that has a tty.
-func askingTTY() (*os.File, error) {
-	pid := os.Getppid()
-	for range 4 {
-		out, err := exec.Command("ps", "-o", "tty=,ppid=", "-p", fmt.Sprint(pid)).Output()
-		if err != nil {
-			break
-		}
-		f := strings.Fields(string(out))
-		if len(f) < 2 {
-			break
-		}
-		if tty := f[0]; tty != "??" && tty != "?" {
-			return os.OpenFile("/dev/"+tty, os.O_WRONLY, 0)
-		}
-		fmt.Sscan(f[1], &pid)
-	}
-	return nil, os.ErrNotExist
 }
