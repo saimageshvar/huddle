@@ -31,7 +31,7 @@ type Agent struct {
 }
 
 func startAgent(req *Request, model, resume string) (*Agent, error) {
-	args := []string{"-p", "--model", model,
+	args := []string{"-p", "--model", model, "--effort", "medium",
 		"--input-format", "stream-json", "--output-format", "stream-json",
 		"--verbose", "--include-partial-messages",
 		"--tools", "Read,Grep,Glob", "--permission-mode", "bypassPermissions",
