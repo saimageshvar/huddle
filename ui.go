@@ -1651,7 +1651,7 @@ func (m *model) boxed(t *textarea.Model, focused bool, w int) string {
 func (m *model) viewThread(w, h int) string {
 	p := m.pal()
 	st := &m.qs[m.cur]
-	head := "\n" + p.muted.Render("The assistant has read access to your agent's conversation.")
+	head := "\n" + p.muted.Render(wrap("The assistant has read access to your agent's conversation.", w))
 	if !m.wide() {
 		head = "\n" + spread(w, p.muted.Render("The assistant can read your agent's conversation."), link("model", m.model+" ⇄"))
 	}
