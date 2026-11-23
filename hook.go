@@ -69,7 +69,7 @@ func runHook() {
 	if json.Unmarshal(in.ToolInput, &input) != nil || len(input.Questions) == 0 {
 		return
 	}
-	block := askingPane()
+	session, block := askingPane()
 	if block == "" {
 		return
 	}
@@ -91,11 +91,23 @@ func runHook() {
 	if err != nil {
 		return
 	}
-	// rex prints the new block id on stdout; keep it out of the hook's output.
+	// The pane is created beside the asking session (so it lands in that tab), then floated over
+	// the tab like a modal. rex prints the new block id first; it stays out of the hook's output.
 	cmd := exec.Command("rex", "run", "-b", block, "--split=right", "--ratio", "60", "--focus=false",
 		"--wait", "--shell=none", "--", exe, "ask", dir)
-	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
-	_ = cmd.Run()
+	stdout, err := cmd.StdoutPipe()
+	cmd.Stderr = io.Discard
+	if err != nil || cmd.Start() != nil {
+		return
+	}
+	sc := bufio.NewScanner(stdout)
+	if sc.Scan() && session != "" {
+		if id := strings.TrimSpace(sc.Text()); strings.HasPrefix(id, "block:") {
+			float(session, id)
+		}
+	}
+	_, _ = io.Copy(io.Discard, stdout)
+	_ = cmd.Wait()
 
 	var resp Response
 	b, err := os.ReadFile(filepath.Join(dir, "response.json"))
@@ -141,21 +153,31 @@ func stepAside(sid string) bool {
 	return err == nil && json.Unmarshal(b, &mode) == nil && mode.Mode == "full" && !mode.Dry
 }
 
-// askingPane is the Rex block of the Claude that asked. Inside hc, REX_BLOCK may be stale.
-func askingPane() string {
+// askingPane is the Rex session and block of the Claude that asked. Inside hc, REX_BLOCK may be stale.
+func askingPane() (session, block string) {
 	if os.Getenv("HC_TERMINAL_ID") != "" {
 		out, err := exec.Command("hc-rex", "env").Output()
 		if err != nil {
-			return ""
+			return "", ""
 		}
 		for _, f := range strings.Fields(string(out)) {
+			f = strings.TrimPrefix(f, "export ")
 			if v, ok := strings.CutPrefix(f, "REX_BLOCK="); ok {
-				return strings.Trim(v, `'"`)
+				block = strings.Trim(v, `'"`)
+			}
+			if v, ok := strings.CutPrefix(f, "REX_SESSION="); ok {
+				session = strings.Trim(v, `'"`)
 			}
 		}
-		return ""
+		return session, block
 	}
-	return os.Getenv("REX_BLOCK")
+	return os.Getenv("REX_SESSION"), os.Getenv("REX_BLOCK")
+}
+
+// float lifts the huddle pane into a floating layer over its tab; if Rex refuses, it stays a split.
+func float(session, block string) {
+	args, _ := json.Marshal(map[string]any{"session_id": session, "block_id": block, "bounds": []float64{0.04, 0.04, 0.92, 0.92}})
+	_ = exec.Command("rex", "api", "call", "session.float_block", string(args)).Run()
 }
 
 func sessionTitle(transcript string) string {

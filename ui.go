@@ -86,7 +86,6 @@ type model struct {
 	bodyH      int      // rows between header and footer in the current frame
 	under      screen   // the screen an overlay is drawn over
 	showKeys   bool
-	blurred    bool
 	flashAt    time.Time
 	modalFrom  int // clickables before this index sit under an open overlay
 	scr        screen
@@ -190,12 +189,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			t.SetStyles(inputStyles(m.dark))
 		}
 		m.md = map[string]string{}
-		return m, nil
-	case tea.FocusMsg:
-		m.blurred = false
-		return m, nil
-	case tea.BlurMsg:
-		m.blurred = true
 		return m, nil
 	case tickMsg:
 		if m.flash != "" && time.Since(m.flashAt) > 4*time.Second {
@@ -1003,7 +996,7 @@ func choiceGlyph(multi, on bool) string {
 	return "( )"
 }
 
-func (m *model) wide() bool { return m.w >= 130 }
+func (m *model) wide() bool { return m.w >= 120 }
 func (m *model) leftWidth() int {
 	if m.wide() {
 		return m.w * 56 / 100
@@ -1030,10 +1023,6 @@ func (m *model) pal() palette {
 	// reverse video: the accent becomes the fill and the label takes the terminal's background,
 	// which reads in any theme (Rex's light "bright white" is grey, so a fixed white would not)
 	onAccent := lipgloss.NewStyle().Bold(true).Reverse(true).Foreground(ld(lipgloss.Color("4"), lipgloss.Color("12")))
-	if m.blurred { // the pane recedes while you work elsewhere
-		accent = st("8", "245")
-		onAccent = onAccent.Foreground(ld(lipgloss.Color("8"), lipgloss.Color("240")))
-	}
 	linkColor = accent.GetForeground()
 	return palette{
 		accent:   accent,
@@ -1222,7 +1211,6 @@ func (m *model) View() tea.View {
 	content, v.Cursor = m.placeCursor(content)
 	m.frame = strings.Split(content, "\n")
 	v.SetContent(m.highlight(content))
-	v.ReportFocus = true
 	v.MouseMode = tea.MouseModeAllMotion
 	if left := m.timeLeft(); !m.expired {
 		state := tea.ProgressBarDefault
@@ -1451,6 +1439,9 @@ func (m *model) viewQuestion() string {
 	m.leftOff = off
 	rhead := m.paneHead(rw, "tab-ask", "Ask about it", !leftFocused, link("model", "model: "+m.model+" ⇄"))
 	r := indent(m.viewThread(rw-4, h-2), 2)
+	if n := lipgloss.Height(r); n < h-2 { // an empty chat is short; pad so the pane's shading fills it
+		r += strings.Repeat("\n", h-2-n)
+	}
 	sep := m.pal().muted.Render(strings.TrimRight(strings.Repeat("│\n", h), "\n"))
 	return lipgloss.JoinHorizontal(lipgloss.Top,
 		m.tint(lhead+"\n"+l, lw, leftFocused), sep, m.tint(rhead+"\n"+r, rw, !leftFocused))
@@ -1883,7 +1874,7 @@ func (m *model) placeCursor(content string) (string, *tea.Cursor) {
 		}
 		lines[y] = l[:i] + l[i+len(cursorMark):]
 		in := m.input()
-		if in == nil || m.blurred {
+		if in == nil {
 			break
 		}
 		c := in.Cursor()
