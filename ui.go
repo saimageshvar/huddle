@@ -1381,8 +1381,11 @@ func (m *model) paneHead(w int, id, title string, focused bool, right string) st
 	return spread(w-1, " "+mark(id, chip), right) + "\n" + rule
 }
 
-// tint paints a focused pane a shade off the terminal's own background, so focus reads in any theme.
-func (m *model) tint(block string, w int, on bool) string {
+// tint shades a pane off the terminal's own background so focus reads in any theme.
+// The focused pane always reads brighter: a dark theme lifts the focused pane, a light theme
+// greys the unfocused one.
+func (m *model) tint(block string, w int, focused bool) string {
+	on := focused == m.dark
 	lines := strings.Split(block, "\n")
 	for i, l := range lines {
 		if pad := w - lipgloss.Width(l); pad > 0 {
