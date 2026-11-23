@@ -1128,9 +1128,12 @@ func clip(block string, off, h int) (string, int) {
 	lines := strings.Split(block, "\n")
 	off = max(0, min(off, len(lines)-h))
 	end := min(len(lines), off+h)
-	out := lines[off:end]
+	out := append([]string(nil), lines[off:end]...)
 	for len(out) < h {
 		out = append(out, "")
+	}
+	if below := len(lines) - end; below > 0 && h > 2 {
+		out[h-1] = lipgloss.NewStyle().Faint(true).Render(fmt.Sprintf("   ↓ %d more lines below · scroll", below))
 	}
 	return strings.Join(out, "\n"), off
 }
@@ -1234,13 +1237,20 @@ func (m *model) viewHeader() string {
 	default:
 		right = fmtDur(left) + " left"
 	}
+	if m.scr == scrQuestion || m.scr == scrReview {
+		sb, keys := icBack+" Send questions back…", "? Keys"
+		if !m.wide() {
+			sb, keys = icBack+" Send back", "?"
+		}
+		right = p.muted.Render(link("sendback", sb)) + "   " + p.muted.Render(link("keys", keys)) + "   " + right
+	}
 	lines := []string{spread(m.w-1, left, right)}
 	if !m.wide() && m.scr == scrQuestion {
 		chip := func(title string, on bool) string {
 			if on {
 				return p.onAccent.Render(" " + title + " ")
 			}
-			return lipgloss.NewStyle().Foreground(p.muted.GetForeground()).Render(title + " ⇥")
+			return lipgloss.NewStyle().Foreground(p.muted.GetForeground()).Render(title)
 		}
 		qt, at := chip("Answer", !m.askTab), chip("Ask about it", m.askTab)
 		if n := m.qs[m.cur].unread; n > 0 {
@@ -1280,7 +1290,7 @@ func (m *model) viewFooter() string {
 		right = []footItem{{"back", "‹ Back", "‹", 0}}
 		label := fmt.Sprintf("Send %d answers ✓", len(m.qs))
 		if skip := len(m.qs) - m.answeredCount(); skip > 0 {
-			label = fmt.Sprintf("Send · %d skipped →", skip)
+			label = fmt.Sprintf("Send with %d skipped →", skip)
 		}
 		right = append(right, footItem{"submit", label, "Send ✓", 1})
 	}
@@ -1293,11 +1303,7 @@ func (m *model) viewFooter() string {
 		stage = 2
 	}
 	r := m.renderFoot(right, stage, false)
-	keys := link("keys", "? Keys")
-	if m.scr == scrQuestion || m.scr == scrReview {
-		keys += "   " + m.pal().muted.Render(link("sendback", icBack+" Send questions back…"))
-	}
-	left := keys + "   " + m.keyBar(m.w-lipgloss.Width(r)-lipgloss.Width(keys)-8)
+	left := m.keyBar(m.w - lipgloss.Width(r) - 8)
 	return m.rule() + "\n" + spread(m.w-1, "  "+left, r+" ")
 }
 
@@ -1309,7 +1315,7 @@ func (m *model) keyBar(w int) string {
 	var hints []keyHint
 	switch {
 	case m.scr == scrReview:
-		hints = []keyHint{{"submit", "⏎", "send"}, {"", "←", "back"}}
+		hints = []keyHint{{"", "⏎", "send"}}
 	case m.scr != scrQuestion:
 		hints = []keyHint{{"", "⏎", "send"}, {"", "esc", "back"}}
 	case m.focus == fChat:
@@ -1415,7 +1421,7 @@ func (m *model) viewQuestion() string {
 // paneHead is a pane's title chip (focus marker and click target) over a rule that is accent when focused.
 func (m *model) paneHead(w int, id, title string, focused bool, right string) string {
 	p := m.pal()
-	chip := lipgloss.NewStyle().Underline(hovered(id)).Foreground(p.muted.GetForeground()).Render(title + "  ⇥")
+	chip := lipgloss.NewStyle().Underline(hovered(id)).Foreground(p.muted.GetForeground()).Render(title)
 	rule := p.muted.Render(strings.Repeat("─", w))
 	if focused {
 		chip = p.onAccent.Render(" " + title + " ")
@@ -1496,23 +1502,21 @@ func (m *model) viewOptions(w int) string {
 				block = append(block, mark(fmt.Sprintf("opt-%d-%d#%d", m.cur, i, j+1), "    "+l))
 			}
 		}
+		text := m.row(strings.Join(block, "\n"), i == st.cursor, focused)
 		if i == st.cursor && preview != "" {
-			pv := strings.Split(m.markdown(preview, w-6), "\n")
-			capLines := max(6, min(14, m.h/4))
+			pv := strings.Split(m.markdown(preview, w-8), "\n")
+			capLines := max(4, min(10, m.h/5))
 			if len(pv) > capLines && !st.showMore {
-				pv = append(pv[:capLines], link("showmore", fmt.Sprintf("Show %d more lines", len(pv)-capLines)))
+				pv = append(pv[:capLines], link("showmore", fmt.Sprintf("Show full preview (%d more lines)", len(pv)-capLines)))
 			} else if len(pv) > capLines {
 				pv = append(pv, link("showmore", "Show less"))
 			}
-			block = append(block, "")
-			for _, l := range pv {
-				block = append(block, "    "+l)
-			}
+			text += "\n\n" + indent(strings.Join(pv, "\n"), 6)
 		}
 		if i == n && on {
-			block = append(block, markLines("other-box", indent(m.boxed(&m.otherIn, m.focus == fOther, w-6), 4)))
+			text += "\n" + markLines("other-box", indent(m.boxed(&m.otherIn, m.focus == fOther, w-6), 6))
 		}
-		b.WriteString(m.row(strings.Join(block, "\n"), i == st.cursor, focused) + "\n\n")
+		b.WriteString(text + "\n\n")
 	}
 	b.WriteString(m.noteRow(w, st.cursor == n+1, focused))
 	return b.String()
@@ -1619,6 +1623,10 @@ func (m *model) viewThread(w, h int) string {
 		}
 		b.WriteString("\n\n")
 	}
+	m.chat.Placeholder = "Ask a follow-up…"
+	if len(st.thread) == 0 {
+		m.chat.Placeholder = "Ask about this question…"
+	}
 	input := markLines("chat-box", m.boxed(&m.chat, m.focus == fChat, w))
 	footer := input + "\n" + spread(w, "", mark("send-chat", p.accent.Bold(true).Render(icSend+" Send")))
 	avail := h - lipgloss.Height(head) - lipgloss.Height(footer) - 1
@@ -1647,12 +1655,12 @@ func (m *model) viewReview() string {
 	var b strings.Builder
 	b.WriteString("\n" + m.stepper() + "\n\n")
 	n := m.answeredCount()
-	count := p.ok.Render(fmt.Sprintf("✓ %d of %d answered", n, len(m.qs)))
-	if n < len(m.qs) {
-		count = p.warn.Render(fmt.Sprintf("▲ %d of %d answered", n, len(m.qs)))
+	count := p.ok.Bold(true).Render(fmt.Sprintf("✓ %d answered", n))
+	if skip := len(m.qs) - n; skip > 0 {
+		count = lipgloss.NewStyle().Bold(true).Render(fmt.Sprintf("%d answered · ", n)) + p.warn.Bold(true).Render(fmt.Sprintf("%d skipped", skip))
 	}
 	b.WriteString(spread(w, lipgloss.NewStyle().Bold(true).Render("Review your answers"), count) + "\n")
-	b.WriteString(p.muted.Render(wrap("Notes are drafted from your discussions. Edit anything before you send.", w)) + "\n")
+	b.WriteString(p.muted.Render(wrap("Notes were drafted from your chats. Edit anything before sending.", w)) + "\n")
 	for i := range m.qs {
 		st := m.qs[i]
 		b.WriteString("\n\n")
@@ -1661,7 +1669,7 @@ func (m *model) viewReview() string {
 		b.WriteString(indent(p.muted.Render(ansi.Truncate(m.req.Questions[i].Question, w-4, "…")), 3) + "\n")
 		ans := m.answerText(i)
 		if ans == "" {
-			b.WriteString(indent(p.muted.Render("– skipped · the agent is told you chose not to answer"), 3) + "\n")
+			b.WriteString(indent(p.warn.Render("– Skipped. The agent is told you left this unanswered."), 3) + "\n")
 		} else {
 			g := p.accent.Render(choiceGlyph(m.req.Questions[i].MultiSelect, true)) + " "
 			b.WriteString(indent(g+strings.ReplaceAll(wrap(m.answerShown(i), w-6), "\n", "\n  "), 3) + "\n")
@@ -1675,17 +1683,22 @@ func (m *model) viewReview() string {
 		case st.drafting:
 			b.WriteString(indent(p.muted.Render(icNote+" ")+p.accent.Render(m.spin.View())+p.muted.Italic(true).Render(" drafting a note from your discussion…"), 3) + "\n")
 		case st.note != "":
-			head := p.muted.Render(icNote+" Note") + "  " + p.muted.Italic(true).Render("yours")
+			head := p.muted.Render(icNote + " Your note")
 			if st.noteByAgent {
-				head = p.muted.Render(icNote+" Note") + "  " + p.muted.Italic(true).Render(icBot+" drafted by the assistant")
+				head = p.muted.Render(icNote + " Drafted by the assistant " + icBot)
 			}
 			head += "   " + p.muted.Render(link(fmt.Sprintf("edit-%d", i), "Edit"))
 			body := p.muted.Render("│") + " " + strings.ReplaceAll(wrap(st.note, w-8), "\n", "\n"+p.muted.Render("│")+" ")
 			b.WriteString("\n" + indent(head+"\n"+body, 3) + "\n")
 		default:
-			b.WriteString(indent(p.muted.Render(link(fmt.Sprintf("edit-%d", i), icNote+" Add a note")), 3) + "\n")
+			b.WriteString(indent(link(fmt.Sprintf("edit-%d", i), "+ Add note"), 3) + "\n")
 		}
 	}
+	send := fmt.Sprintf("Send %d answers ✓", len(m.qs))
+	if skip := len(m.qs) - n; skip > 0 {
+		send = fmt.Sprintf("Send with %d skipped →", skip)
+	}
+	b.WriteString("\n\n" + spread(w, "", m.button("submit#flow", send)) + "\n")
 	out, off := clip(m.center(b.String(), w), m.leftOff, m.h-4)
 	m.leftOff = off
 	return out
@@ -1728,7 +1741,7 @@ func (m *model) viewReframe() string {
 	if m.inclSum {
 		box = p.accent.Render("\U000F0135")
 	}
-	b.WriteString(mark("reason-incl", box+" Include my notes from the discussions") + "\n")
+	b.WriteString(mark("reason-incl", box+" Include my notes for the agent") + "\n")
 	b.WriteString(p.muted.Render(wrap("The whole set goes back. Your answers to the questions you did not tick travel with it, so the agent can keep them when it asks again.", w)) + "\n\n")
 	b.WriteString(spread(w, "", link("reason-cancel", "Cancel")+"    "+m.button("reason-send", "Send back ↩")))
 	return b.String()
@@ -1886,9 +1899,9 @@ func (m *model) viewKeys() string {
 	var b strings.Builder
 	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Keys") + p.muted.Render("   everything is also clickable") + "\n\n")
 	for _, r := range rows {
-		b.WriteString(lipgloss.NewStyle().Bold(true).Width(12).Render(r[0]) + p.muted.Render(r[1]) + "\n")
+		b.WriteString(lipgloss.NewStyle().Bold(true).Width(17).Render(r[0]) + p.muted.Render(r[1]) + "\n")
 	}
-	b.WriteString("\n" + p.muted.Render("Press any key or click Close.") + "   " + link("keys", "Close"))
+	b.WriteString("\n" + link("keys", "Close") + p.muted.Render("   or press any key"))
 	return b.String()
 }
 
