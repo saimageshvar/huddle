@@ -1238,7 +1238,7 @@ func (m *model) viewHeader() string {
 		right = fmtDur(left) + " left"
 	}
 	if m.scr == scrQuestion || m.scr == scrReview {
-		sb, keys := icBack+" Send questions back…", "? Keys"
+		sb, keys := icBack+" Send back…", "? Keys"
 		if !m.wide() {
 			sb, keys = icBack+" Send back", "?"
 		}
@@ -1290,7 +1290,7 @@ func (m *model) viewFooter() string {
 		right = []footItem{{"back", "‹ Back", "‹", 0}}
 		label := fmt.Sprintf("Send %d answers ✓", len(m.qs))
 		if skip := len(m.qs) - m.answeredCount(); skip > 0 {
-			label = fmt.Sprintf("Send with %d skipped →", skip)
+			label = fmt.Sprintf("Send (%d skipped) →", skip)
 		}
 		right = append(right, footItem{"submit", label, "Send ✓", 1})
 	}
@@ -1325,9 +1325,9 @@ func (m *model) keyBar(w int) string {
 	case m.focus == fOther:
 		hints = []keyHint{{"", "⏎", "done"}, {"kb-esc", "esc", "back"}}
 	case m.req.Questions[m.cur].MultiSelect:
-		hints = []keyHint{{"", "↑↓", "move"}, {"", "space", "toggle"}, {"next", "⏎", "next"}, {"kb-tab", "tab", "ask"}, {"kb-note", "/", "note"}}
+		hints = []keyHint{{"", "↑↓", "move"}, {"", "space", "toggle"}, {"next", "⏎", "next"}, {"kb-tab", "tab", "chat"}, {"kb-note", "/", "note"}}
 	default:
-		hints = []keyHint{{"", "↑↓", "move"}, {"", "⏎", "choose"}, {"", fmt.Sprintf("1-%d", len(m.req.Questions[m.cur].Options)+1), "pick"}, {"kb-tab", "tab", "ask"}, {"kb-note", "/", "note"}}
+		hints = []keyHint{{"", "↑↓", "move"}, {"", "⏎", "choose"}, {"", fmt.Sprintf("1-%d", len(m.req.Questions[m.cur].Options)+1), "pick"}, {"kb-tab", "tab", "chat"}, {"kb-note", "/", "note"}}
 	}
 	var parts []string
 	used := 0
@@ -1392,7 +1392,7 @@ func (m *model) stepper() string {
 		}
 		parts = append(parts, mark(fmt.Sprintf("step-%d", i), s))
 	}
-	return strings.Join(parts, p.muted.Render(" ── "))
+	return strings.Join(parts, "   ")
 }
 
 func (m *model) viewQuestion() string {
@@ -1425,7 +1425,7 @@ func (m *model) paneHead(w int, id, title string, focused bool, right string) st
 	rule := p.muted.Render(strings.Repeat("─", w))
 	if focused {
 		chip = p.onAccent.Render(" " + title + " ")
-		rule = p.accent.Render(strings.Repeat("━", w))
+		rule = p.accent.Render(strings.Repeat("─", w))
 	}
 	return spread(w-1, " "+mark(id, chip), right) + "\n" + rule
 }
@@ -1481,7 +1481,7 @@ func (m *model) viewOptions(w int) string {
 		label, rec := stripRecommended(label)
 		on := st.picked[i]
 		glyph := choiceGlyph(q.MultiSelect, on)
-		if on {
+		if on || i == st.cursor {
 			glyph = p.accent.Render(glyph)
 		}
 		lst := lipgloss.NewStyle()
@@ -1558,7 +1558,7 @@ func (m *model) noteRow(w int, cursor, focused bool) string {
 		return bar(p.accent, "▌", head+"\n"+box+"\n"+spread(w-2, "", acts)) + "\n"
 	}
 	if st.note == "" {
-		head := mark("note-row#0", p.muted.Render(icNote)+" "+lipgloss.NewStyle().Underline(true).Render("Add a note for the agent")+p.muted.Render("   /"))
+		head := mark("note-row#0", p.muted.Render(icNote)+" "+lipgloss.NewStyle().Foreground(linkColor).Underline(hovered("note-row")).Render("Add a note for the agent")+p.muted.Render("   (/)"))
 		return m.row(head, cursor, focused) + "\n"
 	}
 	head := p.muted.Render(icNote) + " " + lipgloss.NewStyle().Bold(true).Render("Note for the agent")
@@ -1597,7 +1597,7 @@ func (m *model) viewThread(w, h int) string {
 	if len(st.thread) == 0 {
 		b.WriteString(p.muted.Render(wrap("Ask what the question means, what each option implies, or what the assistant would pick. Or start with:", w-2)) + "\n\n")
 		for i, q := range starters {
-			b.WriteString(mark(fmt.Sprintf("starter-%d", i), p.accent.Render("› ")+lipgloss.NewStyle().Underline(true).Render(q)) + "\n")
+			b.WriteString(mark(fmt.Sprintf("starter-%d", i), p.accent.Render("› ")+lipgloss.NewStyle().Foreground(linkColor).Underline(hovered(fmt.Sprintf("starter-%d", i))).Render(q)) + "\n")
 		}
 	}
 	for i, c := range st.thread {
@@ -1623,14 +1623,17 @@ func (m *model) viewThread(w, h int) string {
 		}
 		b.WriteString("\n\n")
 	}
-	m.chat.Placeholder = "Ask a follow-up…"
+	m.chat.Placeholder = "Ask a follow-up"
 	if len(st.thread) == 0 {
-		m.chat.Placeholder = "Ask about this question…"
+		m.chat.Placeholder = "Ask about this question"
 	}
 	input := markLines("chat-box", m.boxed(&m.chat, m.focus == fChat, w))
 	footer := input + "\n" + spread(w, "", mark("send-chat", p.accent.Bold(true).Render(icSend+" Send")))
 	avail := h - lipgloss.Height(head) - lipgloss.Height(footer) - 1
 	lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
+	if len(st.thread) == 0 {
+		avail = min(avail, len(lines)+1)
+	}
 	maxOff := max(0, len(lines)-avail)
 	m.threadOff = min(m.threadOff, maxOff)
 	start := max(0, len(lines)-avail-m.threadOff)
@@ -1669,7 +1672,7 @@ func (m *model) viewReview() string {
 		b.WriteString(indent(p.muted.Render(ansi.Truncate(m.req.Questions[i].Question, w-4, "…")), 3) + "\n")
 		ans := m.answerText(i)
 		if ans == "" {
-			b.WriteString(indent(p.warn.Render("– Skipped. The agent is told you left this unanswered."), 3) + "\n")
+			b.WriteString(indent(p.warn.Render("– Skipped. The agent will see this as unanswered."), 3) + "\n")
 		} else {
 			g := p.accent.Render(choiceGlyph(m.req.Questions[i].MultiSelect, true)) + " "
 			b.WriteString(indent(g+strings.ReplaceAll(wrap(m.answerShown(i), w-6), "\n", "\n  "), 3) + "\n")
@@ -1696,7 +1699,7 @@ func (m *model) viewReview() string {
 	}
 	send := fmt.Sprintf("Send %d answers ✓", len(m.qs))
 	if skip := len(m.qs) - n; skip > 0 {
-		send = fmt.Sprintf("Send with %d skipped →", skip)
+		send = fmt.Sprintf("Send (%d skipped) →", skip)
 	}
 	b.WriteString("\n\n" + spread(w, "", m.button("submit#flow", send)) + "\n")
 	out, off := clip(m.center(b.String(), w), m.leftOff, m.h-4)
@@ -1708,8 +1711,8 @@ func (m *model) viewReframe() string {
 	p := m.pal()
 	w := min(m.w-12, 80)
 	var b strings.Builder
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render(icBack+"  Send questions back") + "\n")
-	b.WriteString(p.muted.Render(wrap("Tick each question that is wrong and say why. The agent reads your reasons and asks again.", w)) + "\n\n")
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render(icBack+"  Send questions back") + "\n\n")
+	b.WriteString(p.muted.Render(wrap("Tick the questions that are wrong and say why. The agent will ask again.", w)) + "\n\n")
 	for i, q := range m.req.Questions {
 		st := m.qs[i]
 		box := "\U000F0131"
@@ -1742,8 +1745,8 @@ func (m *model) viewReframe() string {
 		box = p.accent.Render("\U000F0135")
 	}
 	b.WriteString(mark("reason-incl", box+" Include my notes for the agent") + "\n")
-	b.WriteString(p.muted.Render(wrap("The whole set goes back. Your answers to the questions you did not tick travel with it, so the agent can keep them when it asks again.", w)) + "\n\n")
-	b.WriteString(spread(w, "", link("reason-cancel", "Cancel")+"    "+m.button("reason-send", "Send back ↩")))
+	b.WriteString(p.muted.Render(wrap("Your answers to the other questions go back too, so the agent can keep them.", w)) + "\n\n")
+	b.WriteString(spread(w, "", link("reason-cancel", "Cancel")+"    "+m.button("reason-send", "Send back")))
 	return b.String()
 }
 func (m *model) anyLive() bool {
@@ -1888,20 +1891,23 @@ func splice(page, block string, x, y int) string {
 
 func (m *model) viewKeys() string {
 	p := m.pal()
-	rows := [][2]string{
-		{"↑ ↓", "move between options"}, {"⏎ or a number", "choose and go to the next question"},
-		{"space", "toggle (pick-any questions)"}, {"← →", "previous / next question"},
-		{"tab", "switch between Answer and Ask about it"}, {"any letter", "start a message to the assistant"},
-		{"/", "write a note for the agent"}, {"⏎ / ⇧⏎", "send / new line in a text box"},
-		{"esc", "back (keeps what you typed)"}, {"pgup pgdn", "scroll the discussion"},
-		{"drag", "select text; it is copied when you let go"}, {"?", "this list"},
+	groups := []struct {
+		name string
+		rows [][2]string
+	}{
+		{"Moving", [][2]string{{"↑ ↓", "move between options"}, {"← →", "previous / next question"}, {"tab", "switch between Answer and Ask about it"}, {"esc", "back (keeps what you typed)"}, {"pgup pgdn", "scroll the discussion"}}},
+		{"Answering", [][2]string{{"⏎ or a number", "choose and go to the next question"}, {"space", "toggle (pick-any questions)"}}},
+		{"Text", [][2]string{{"any letter", "start a message to the assistant"}, {"/", "write a note for the agent"}, {"⏎ / ⇧⏎", "send / new line in a text box"}, {"drag", "select text; copied when you let go"}}},
 	}
 	var b strings.Builder
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Keys") + p.muted.Render("   everything is also clickable") + "\n\n")
-	for _, r := range rows {
-		b.WriteString(lipgloss.NewStyle().Bold(true).Width(17).Render(r[0]) + p.muted.Render(r[1]) + "\n")
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Keys") + p.muted.Render("   everything here is also clickable") + "\n")
+	for _, g := range groups {
+		b.WriteString("\n" + p.muted.Render(g.name) + "\n")
+		for _, r := range g.rows {
+			b.WriteString(lipgloss.NewStyle().Bold(true).Width(17).Render(r[0]) + r[1] + "\n")
+		}
 	}
-	b.WriteString("\n" + link("keys", "Close") + p.muted.Render("   or press any key"))
+	b.WriteString("\n" + link("keys", "Close"))
 	return b.String()
 }
 
