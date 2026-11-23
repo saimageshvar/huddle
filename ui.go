@@ -1007,17 +1007,17 @@ func (m *model) wheel(msg tea.MouseWheelMsg) {
 	}
 }
 
-// choiceGlyph draws three-cell markers, big enough to read the selection at a glance.
+// choiceGlyph draws circle (single choice) and square (multiple choice) markers; chosen ones are filled.
 func choiceGlyph(multi, on bool) string {
 	switch {
 	case multi && on:
-		return "[✓]"
+		return "\U000F0132" // checkbox-marked: a filled square with a tick
 	case multi:
-		return "[ ]"
+		return "\U000F0131" // checkbox-blank-outline: an empty square
 	case on:
-		return "(●)"
+		return "\U000F012F" // checkbox-blank-circle: a filled circle
 	}
-	return "( )"
+	return "\U000F0130" // checkbox-blank-circle-outline: an empty circle
 }
 
 func (m *model) wide() bool { return m.w >= 120 }
@@ -1783,9 +1783,9 @@ func (m *model) viewReframe() string {
 	b.WriteString(p.muted.Render(wrap("Tick the questions that are wrong and say why. The agent will ask again.", w)) + "\n\n")
 	for i, q := range m.req.Questions {
 		st := m.qs[i]
-		box := "[ ]"
+		box := "\U000F0131"
 		if st.flagged {
-			box = p.accent.Render("[✓]")
+			box = p.accent.Render("\U000F0132")
 		}
 		title := lipgloss.NewStyle().Bold(st.flagged).Render(m.header(i))
 		b.WriteString(mark(fmt.Sprintf("flag-%d", i), box+" "+title) + p.muted.Render("  "+ansi.Truncate(q.Question, w-lipgloss.Width(m.header(i))-6, "…")) + "\n")
@@ -1808,9 +1808,9 @@ func (m *model) viewReframe() string {
 		}
 		b.WriteString("\n")
 	}
-	box := "[ ]"
+	box := "\U000F0131"
 	if m.inclSum {
-		box = p.accent.Render("[✓]")
+		box = p.accent.Render("\U000F0132")
 	}
 	b.WriteString(mark("reason-incl", box+" Include my notes for the agent") + "\n")
 	b.WriteString(p.muted.Render(wrap("Your answers to the other questions go back too, so the agent can keep them.", w)) + "\n\n")
