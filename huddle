@@ -6,6 +6,7 @@
 """
 import json
 import os
+import signal
 import socket
 import sys
 
@@ -60,6 +61,8 @@ def ask(q):
 
 
 def serve():
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, lambda *_: sys.exit())  # run the finally that removes the socket
     if os.path.exists(SOCK):
         os.unlink(SOCK)
     with socket.socket(socket.AF_UNIX) as srv:
