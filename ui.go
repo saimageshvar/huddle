@@ -83,6 +83,7 @@ type model struct {
 	sel        *selection
 	selDone    bool
 	frame      []string // last rendered lines, for copying a selection
+	bodyH      int      // rows between header and footer in the current frame
 	under      screen   // the screen an overlay is drawn over
 	showKeys   bool
 	blurred    bool
@@ -435,6 +436,11 @@ func (m *model) toggleTab() tea.Cmd {
 func (m *model) pick(qi, oi int) tea.Cmd {
 	q := &m.qs[qi]
 	opts := m.req.Questions[qi].Options
+	if oi == len(opts) && q.picked[oi] {
+		q.cursor = oi
+		m.otherIn.SetValue(q.other)
+		return m.setFocus(fOther)
+	}
 	q.cursor = oi
 	if m.req.Questions[qi].MultiSelect {
 		q.picked[oi] = !q.picked[oi]
@@ -466,8 +472,7 @@ func (m *model) submitInput() tea.Cmd {
 		}
 		return m.setFocus(fOptions)
 	case fNote:
-		m.finishNote()
-		return m.setFocus(fOptions)
+		return m.setFocus(fOptions) // leaving the note saves it
 	case fReason:
 		return m.sendBack()
 	}
@@ -553,7 +558,10 @@ func (m *model) onAgent(ev agentMsg) tea.Cmd {
 			}
 		case "note":
 			q.drafting = false
-			if !q.noteEdited && out != "NONE" {
+			switch {
+			case out == "NONE":
+				m.flashAt, m.flash = time.Now(), fmt.Sprintf("Nothing in the %s discussion is worth passing on as a note.", m.header(p.q))
+			case !q.noteEdited:
 				q.note, q.noteByAgent = out, true
 			}
 		case "reason":
@@ -789,7 +797,7 @@ func (m *model) switchModel() tea.Cmd {
 
 func (m *model) finishNote() {
 	if m.editNote < 0 {
-		m.editNote = m.cur
+		return // no note open: never guess which question a note belongs to
 	}
 	q := &m.qs[m.editNote]
 	v := strings.TrimSpace(m.notes.Value())
@@ -800,6 +808,9 @@ func (m *model) finishNote() {
 }
 
 func (m *model) startNote(i int) tea.Cmd {
+	if m.focus == fNote {
+		m.setFocus(fOptions) // saves the open note into its own question first
+	}
 	m.editNote = i
 	m.notes.SetValue(m.qs[i].note)
 	return m.setFocus(fNote)
@@ -839,9 +850,6 @@ func (m *model) click(msg tea.MouseClickMsg) tea.Cmd {
 		return m.setFocus(fChat)
 	}
 	if m.scr == scrQuestion && m.focus != fOptions {
-		if m.focus == fNote {
-			m.finishNote()
-		}
 		return m.setFocus(fOptions)
 	}
 	return nil
@@ -905,17 +913,21 @@ func (m *model) action(id string) tea.Cmd {
 	case "note-box":
 		return m.setFocus(fNote)
 	case "note-done":
-		m.finishNote()
 		return m.setFocus(fOptions)
 	case "note-clear":
 		m.notes.SetValue("")
 	case "note-rewrite":
 		i := m.editNote
-		m.qs[i].noteEdited, m.qs[i].draftedAt = false, -1
-		m.finishNote()
-		m.qs[i].noteEdited = false
+		if i < 0 {
+			i = m.cur
+		}
 		m.setFocus(fOptions)
-		return m.draftNote(i)
+		if len(m.qs[i].thread) == 0 {
+			m.flashAt, m.flash = time.Now(), "Nothing to draft from yet: chat about this question in Ask about it, then Rewrite."
+			return nil
+		}
+		m.qs[i].noteEdited, m.qs[i].draftedAt = false, -1
+		return tea.Batch(m.draftNote(i), m.spin.Tick)
 	case "showmore":
 		m.qs[m.cur].showMore = !m.qs[m.cur].showMore
 	case "model":
@@ -958,6 +970,18 @@ func (m *model) wheel(msg tea.MouseWheelMsg) {
 	case tea.MouseWheelDown:
 		d = 3
 	}
+	boxes := map[string]*textarea.Model{"note-box": &m.notes, "other-box": &m.otherIn, "chat-box": &m.chat, "reason-box": &m.reason}
+	id, _, _ := strings.Cut(m.hit(mouse.X, mouse.Y), "#")
+	if t := boxes[id]; t != nil { // the pointer is over a text box: scroll its text
+		for range max(d, -d) {
+			if d < 0 {
+				t.CursorUp()
+			} else {
+				t.CursorDown()
+			}
+		}
+		return
+	}
 	inThread := m.askTab || (m.wide() && mouse.X >= m.leftWidth())
 	if m.scr == scrQuestion && inThread {
 		m.threadOff = max(0, m.threadOff-d)
@@ -966,17 +990,17 @@ func (m *model) wheel(msg tea.MouseWheelMsg) {
 	}
 }
 
-// choiceGlyph draws Nerd Font Material icons, the same family tick uses.
+// choiceGlyph draws three-cell markers, big enough to read the selection at a glance.
 func choiceGlyph(multi, on bool) string {
 	switch {
 	case multi && on:
-		return "\U000F0135" // checkbox-marked-outline
+		return "[✓]"
 	case multi:
-		return "\U000F0131" // checkbox-blank-outline
+		return "[ ]"
 	case on:
-		return "\U000F043E" // radiobox-marked
+		return "(●)"
 	}
-	return "\U000F043D" // radiobox-blank
+	return "( )"
 }
 
 func (m *model) wide() bool { return m.w >= 130 }
@@ -1064,11 +1088,7 @@ func link(id, s string) string {
 var linkColor color.Color = lipgloss.Color("4")
 
 func (m *model) button(id, s string) string {
-	st := m.pal().onAccent
-	if hovered(id) {
-		st = st.Underline(true)
-	}
-	return mark(id, st.Render(" "+s+" "))
+	return mark(id, m.pal().onAccent.Render(" "+s+" "))
 }
 
 func (m *model) markdown(s string, width int) string {
@@ -1168,6 +1188,9 @@ func (m *model) View() tea.View {
 	if m.w == 0 {
 		return v
 	}
+	header := m.viewHeader()
+	footer := m.viewFooter()
+	m.bodyH = m.h - lipgloss.Height(header) - lipgloss.Height(footer)
 	var body string
 	switch m.scr {
 	case scrQuestion:
@@ -1181,10 +1204,7 @@ func (m *model) View() tea.View {
 			body = m.viewQuestion()
 		}
 	}
-	header := m.viewHeader()
-	footer := m.viewFooter()
-	bh := m.h - lipgloss.Height(header) - lipgloss.Height(footer)
-	body, _ = clip(body, 0, bh)
+	body, _ = clip(body, 0, m.bodyH)
 	page := lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
 	m.modalFrom = 0
 	switch {
@@ -1256,7 +1276,9 @@ func (m *model) viewHeader() string {
 		if n := m.qs[m.cur].unread; n > 0 {
 			at += p.accent.Render(fmt.Sprintf(" · %d new", n))
 		}
-		lines = append(lines, spread(m.w-1, " "+mark("tab-q", qt)+"  "+mark("tab-ask", at), p.muted.Render(fmt.Sprintf("%d of %d", m.cur+1, len(m.qs)))))
+		lines = append(lines, spread(m.w-1, " "+mark("tab-q", qt)+"  "+mark("tab-ask", at), m.stepper(true)))
+	} else if m.scr == scrQuestion || m.scr == scrReview || m.scr == scrReframe {
+		lines = append(lines, " "+m.stepper(!m.wide()))
 	}
 	return strings.Join(lines, "\n") + "\n" + m.rule()
 }
@@ -1370,35 +1392,51 @@ func (m *model) renderFoot(items []footItem, stage int, dropHints bool) string {
 	return strings.Join(parts, "   ")
 }
 
-func (m *model) stepper() string {
+// stepper draws the questions as tabs: the current one filled, ✓ answered, – skipped, ○ not yet.
+// compact shows numbers only, for narrow panes.
+func (m *model) stepper(compact bool) string {
 	p := m.pal()
 	var parts []string
 	for i := 0; i <= len(m.qs); i++ {
-		label, done := "Review", false
+		label, state := "Review", ""
 		if i < len(m.qs) {
-			label, done = m.header(i), m.answered(i)
+			label, state = m.header(i), "○"
+			switch {
+			case m.answered(i):
+				state = "✓"
+			case m.qs[i].visited:
+				state = "–"
+			}
+			if compact {
+				label = fmt.Sprint(i + 1)
+			}
+		} else if compact {
+			label = "✓"
+		}
+		text := label
+		if state != "" && !compact {
+			text = state + " " + label
 		}
 		active := (m.scr == scrReview && i == len(m.qs)) || (m.scr != scrReview && i == m.cur)
-		var s string
+		var t string
 		switch {
 		case active:
-			s = p.accent.Render("●") + " " + lipgloss.NewStyle().Bold(true).Render(label)
-		case done:
-			s = p.ok.Render("✓") + " " + p.muted.Render(label)
-		case i < len(m.qs) && m.qs[i].visited:
-			s = p.muted.Render("– " + label)
+			t = p.onAccent.Render(" " + text + " ")
+		case state == "✓" && compact:
+			t = p.ok.Render(" " + text + " ")
+		case state == "✓":
+			t = " " + p.ok.Render("✓") + lipgloss.NewStyle().Render(" "+label) + " "
 		default:
-			s = p.muted.Render("○ " + label)
+			t = p.muted.Render(" " + text + " ")
 		}
-		parts = append(parts, mark(fmt.Sprintf("step-%d", i), s))
+		parts = append(parts, mark(fmt.Sprintf("step-%d", i), t))
 	}
-	return strings.Join(parts, "   ")
+	return strings.Join(parts, " ")
 }
 
 func (m *model) viewQuestion() string {
-	h := m.h - 4
+	h := m.bodyH
 	if !m.wide() {
-		h = m.h - 5
 		if m.askTab {
 			return indent(m.viewThread(m.w-4, h), 2)
 		}
@@ -1408,7 +1446,7 @@ func (m *model) viewQuestion() string {
 	}
 	lw, rw := m.leftWidth(), m.w-m.leftWidth()-1
 	leftFocused := m.focus != fChat
-	lhead := m.paneHead(lw, "tab-q", "Answer", leftFocused, m.stepper())
+	lhead := m.paneHead(lw, "tab-q", "Answer", leftFocused, "")
 	l, off := clip(indent(m.viewOptions(lw-6), 3), m.leftOff, h-2)
 	m.leftOff = off
 	rhead := m.paneHead(rw, "tab-ask", "Ask about it", !leftFocused, link("model", "model: "+m.model+" ⇄"))
@@ -1488,6 +1526,9 @@ func (m *model) viewOptions(w int) string {
 		if i == st.cursor || on {
 			lst = lst.Bold(true)
 		}
+		if on {
+			lst = lst.Foreground(p.accent.GetForeground())
+		}
 		if hovered(fmt.Sprintf("opt-%d-%d", m.cur, i)) {
 			lst = lst.Underline(true)
 		}
@@ -1511,10 +1552,14 @@ func (m *model) viewOptions(w int) string {
 			} else if len(pv) > capLines {
 				pv = append(pv, link("showmore", "Show less"))
 			}
-			text += "\n\n" + indent(strings.Join(pv, "\n"), 6)
+			text += "\n" + indent(strings.Join(pv, "\n"), 6)
 		}
 		if i == n && on {
-			text += "\n" + markLines("other-box", indent(m.boxed(&m.otherIn, m.focus == fOther, w-6), 6))
+			hint := "click to type · ⏎ when on this row"
+			if m.focus == fOther {
+				hint = "⏎ done · esc back to options"
+			}
+			text += "\n" + markLines("other-box", indent(m.boxed(&m.otherIn, m.focus == fOther, w-6), 6)) + "\n" + indent(p.muted.Render(hint), 7)
 		}
 		b.WriteString(text + "\n\n")
 	}
@@ -1656,7 +1701,7 @@ func (m *model) viewReview() string {
 	p := m.pal()
 	w := min(m.w-8, 96)
 	var b strings.Builder
-	b.WriteString("\n" + m.stepper() + "\n\n")
+	b.WriteString("\n")
 	n := m.answeredCount()
 	count := p.ok.Bold(true).Render(fmt.Sprintf("✓ %d answered", n))
 	if skip := len(m.qs) - n; skip > 0 {
@@ -1702,7 +1747,7 @@ func (m *model) viewReview() string {
 		send = fmt.Sprintf("Send (%d skipped) →", skip)
 	}
 	b.WriteString("\n\n" + spread(w, "", m.button("submit#flow", send)) + "\n")
-	out, off := clip(m.center(b.String(), w), m.leftOff, m.h-4)
+	out, off := clip(m.center(b.String(), w), m.leftOff, m.bodyH)
 	m.leftOff = off
 	return out
 }
@@ -1715,9 +1760,9 @@ func (m *model) viewReframe() string {
 	b.WriteString(p.muted.Render(wrap("Tick the questions that are wrong and say why. The agent will ask again.", w)) + "\n\n")
 	for i, q := range m.req.Questions {
 		st := m.qs[i]
-		box := "\U000F0131"
+		box := "[ ]"
 		if st.flagged {
-			box = p.accent.Render("\U000F0135")
+			box = p.accent.Render("[✓]")
 		}
 		title := lipgloss.NewStyle().Bold(st.flagged).Render(m.header(i))
 		b.WriteString(mark(fmt.Sprintf("flag-%d", i), box+" "+title) + p.muted.Render("  "+ansi.Truncate(q.Question, w-lipgloss.Width(m.header(i))-6, "…")) + "\n")
@@ -1740,9 +1785,9 @@ func (m *model) viewReframe() string {
 		}
 		b.WriteString("\n")
 	}
-	box := "\U000F0131"
+	box := "[ ]"
 	if m.inclSum {
-		box = p.accent.Render("\U000F0135")
+		box = p.accent.Render("[✓]")
 	}
 	b.WriteString(mark("reason-incl", box+" Include my notes for the agent") + "\n")
 	b.WriteString(p.muted.Render(wrap("Your answers to the other questions go back too, so the agent can keep them.", w)) + "\n\n")
