@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
@@ -48,6 +49,7 @@ func runAsk(dir string) error {
 	if len(req.Questions) == 0 {
 		return fmt.Errorf("no questions in %s", dir)
 	}
+	_ = exec.Command("afplay", "/System/Library/Sounds/Glass.aiff").Start() // a quiet chime: the pane opens without focus
 	zone.NewGlobal()
 	m := newModel(&req, dir)
 	_, err = tea.NewProgram(m).Run()
