@@ -59,6 +59,8 @@ type qstate struct {
 	drafting    bool
 	draftedAt   int // len(thread) when the note was last drafted
 	showMore    bool
+	flagged     bool   // ticked in the Send back card as a wrong question
+	reason      string // why it is wrong
 }
 
 type pending struct {
@@ -75,6 +77,7 @@ type model struct {
 	bg         color.Color
 	spin       spinner.Model
 	sendAnyway bool
+	reasonQ    int // the question whose reason the reason box is editing, -1 none
 	sel        *selection
 	selDone    bool
 	frame      []string // last rendered lines, for copying a selection
@@ -542,7 +545,10 @@ func (m *model) onAgent(ev agentMsg) tea.Cmd {
 		case "reason":
 			q.drafting = false
 			if out != "NONE" {
-				m.reason.SetValue(out)
+				q.reason = out
+				if p.q == m.reasonQ {
+					m.reason.SetValue(out)
+				}
 			}
 		}
 	}
@@ -654,25 +660,77 @@ func (m *model) submit() tea.Cmd {
 }
 
 func (m *model) sendBack() tea.Cmd {
-	reason := strings.TrimSpace(m.reason.Value())
-	if reason == "" || m.expired {
-		return nil
-	}
+	m.stashReason()
 	var b strings.Builder
-	fmt.Fprintf(&b, "Question: %s\n\nWhat is wrong with it: %s\n", m.req.Questions[m.cur].Question, reason)
-	if n := strings.TrimSpace(m.qs[m.cur].note); m.inclSum && n != "" {
-		fmt.Fprintf(&b, "\nSummary of the user's discussion: %s\n", n)
-	}
 	var kept []string
 	for i, q := range m.req.Questions {
-		if i != m.cur && m.answered(i) {
+		st := m.qs[i]
+		switch {
+		case st.flagged && strings.TrimSpace(st.reason) != "":
+			fmt.Fprintf(&b, "Question: %s\nWhat is wrong with it: %s\n", q.Question, strings.TrimSpace(st.reason))
+			if n := strings.TrimSpace(st.note); m.inclSum && n != "" {
+				fmt.Fprintf(&b, "Summary of the user's discussion: %s\n", n)
+			}
+			b.WriteString("\n")
+		case m.answered(i):
 			kept = append(kept, fmt.Sprintf("- %s → %s", q.Question, m.answerText(i)))
 		}
 	}
+	if b.Len() == 0 {
+		m.flashAt, m.flash = time.Now(), "Tick a question and say what is wrong with it."
+		return nil
+	}
 	if len(kept) > 0 {
-		b.WriteString("\nThe user's answers to the other questions, to keep when you ask again:\n" + strings.Join(kept, "\n") + "\n")
+		b.WriteString("The user's answers to the other questions, to keep when you ask again:\n" + strings.Join(kept, "\n") + "\n")
 	}
 	return m.finish(Response{Kind: "reframe", Reason: b.String()})
+}
+
+// openSendBack shows the Send back card; from a question screen that question starts ticked.
+func (m *model) openSendBack() tea.Cmd {
+	m.under, m.scr = m.scr, scrReframe
+	m.reasonQ = -1
+	if m.under == scrQuestion {
+		m.qs[m.cur].flagged = true
+	}
+	for i := range m.qs {
+		if m.qs[i].flagged {
+			return m.editReason(i)
+		}
+	}
+	return m.setFocus(fOptions)
+}
+
+// stashReason saves the reason box into the question it is editing.
+func (m *model) stashReason() {
+	if m.reasonQ >= 0 {
+		m.qs[m.reasonQ].reason = m.reason.Value()
+	}
+}
+
+func (m *model) editReason(i int) tea.Cmd {
+	m.stashReason()
+	m.reasonQ = i
+	m.reason.SetValue(m.qs[i].reason)
+	return m.setFocus(fReason)
+}
+
+func (m *model) toggleFlag(i int) tea.Cmd {
+	m.stashReason()
+	m.qs[i].flagged = !m.qs[i].flagged
+	if m.qs[i].flagged {
+		return m.editReason(i)
+	}
+	if m.reasonQ == i {
+		m.reasonQ = -1
+		for j := range m.qs {
+			if m.qs[j].flagged {
+				return m.editReason(j)
+			}
+		}
+		return m.setFocus(fOptions)
+	}
+	return nil
 }
 
 func (m *model) finish(resp Response) tea.Cmd {
@@ -787,10 +845,10 @@ func (m *model) action(id string) tea.Cmd {
 			return m.review()
 		}
 		return m.goTo(a)
-	case sscan(id, "sendback-%d", &a):
-		m.cur = a
-		m.under, m.scr = m.scr, scrReframe
-		return m.setFocus(fReason)
+	case sscan(id, "flag-%d", &a):
+		return m.toggleFlag(a)
+	case sscan(id, "why-%d", &a):
+		return m.editReason(a)
 	case sscan(id, "starter-%d", &a):
 		m.chat.SetValue(starters[a])
 		m.setFocus(fChat)
@@ -849,17 +907,13 @@ func (m *model) action(id string) tea.Cmd {
 	case "submit":
 		return m.submit()
 	case "sendback":
-		m.under, m.scr = m.scr, scrReframe
-		if m.cur >= len(m.qs) {
-			m.cur = 0
-		}
-		return m.setFocus(fReason)
+		return m.openSendBack()
 	case "reason-box":
 		return m.setFocus(fReason)
 	case "reason-draft":
-		if len(m.qs[m.cur].thread) > 0 && !m.qs[m.cur].drafting {
-			m.qs[m.cur].drafting = true
-			return m.ask(m.cur, "reason", fmt.Sprintf("[DRAFT REASON Q%d] Write why question %d should be asked differently.", m.cur+1, m.cur+1))
+		if q := m.reasonQ; q >= 0 && len(m.qs[q].thread) > 0 && !m.qs[q].drafting {
+			m.qs[q].drafting = true
+			return m.ask(q, "reason", fmt.Sprintf("[DRAFT REASON Q%d] Write why question %d should be asked differently.", q+1, q+1))
 		}
 	case "reason-incl":
 		m.inclSum = !m.inclSum
@@ -1200,7 +1254,7 @@ func (m *model) viewFooter() string {
 		}
 		right = append(right, footItem{"next", label, label, 1})
 	case scrReview:
-		right = []footItem{{"back", "‹ Back", "‹", 0}}
+		right = []footItem{{"sendback", icBack + " Send back", icBack, 0}, {"back", "‹ Back", "‹", 0}}
 		label := fmt.Sprintf("Send %d answers ✓", len(m.qs))
 		if skip := len(m.qs) - m.answeredCount(); skip > 0 {
 			label = fmt.Sprintf("Send, skipping %d ✓", skip)
@@ -1571,7 +1625,7 @@ func (m *model) viewReview() string {
 	for i := range m.qs {
 		st := m.qs[i]
 		b.WriteString("\n\n")
-		acts := p.muted.Render(link(fmt.Sprintf("sendback-%d", i), icBack+" Send back")) + "   " + link(fmt.Sprintf("change-%d", i), "Change")
+		acts := link(fmt.Sprintf("change-%d", i), "Change")
 		b.WriteString(spread(w, p.muted.Render(fmt.Sprintf("%d  ", i+1))+lipgloss.NewStyle().Bold(true).Render(m.header(i)), acts) + "\n")
 		ans := m.answerText(i)
 		if ans == "" {
@@ -1609,26 +1663,41 @@ func (m *model) viewReframe() string {
 	p := m.pal()
 	w := min(m.w-12, 80)
 	var b strings.Builder
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render(icBack+"  Send this question back") + "\n")
-	b.WriteString(p.muted.Render(wrap("Use this when the question itself is wrong. The agent reads your reason and asks again.", w)) + "\n\n")
-	b.WriteString(p.muted.Render("The question") + "\n")
-	b.WriteString(bar(p.muted, "│", wrap(m.req.Questions[m.cur].Question, w-2)) + "\n\n")
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render("What is wrong with it?") + "\n")
-	b.WriteString(markLines("reason-box", m.boxed(&m.reason, m.focus == fReason, w)) + "\n")
-	draft := ""
-	switch {
-	case m.qs[m.cur].drafting:
-		draft = p.muted.Italic(true).Render("drafting…")
-	case len(m.qs[m.cur].thread) > 0:
-		draft = link("reason-draft", "Draft from my discussion")
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render(icBack+"  Send questions back") + "\n")
+	b.WriteString(p.muted.Render(wrap("Tick each question that is wrong and say why. The agent reads your reasons and asks again.", w)) + "\n\n")
+	for i, q := range m.req.Questions {
+		st := m.qs[i]
+		box := "\U000F0131"
+		if st.flagged {
+			box = p.accent.Render("\U000F0135")
+		}
+		title := lipgloss.NewStyle().Bold(st.flagged).Render(m.header(i))
+		b.WriteString(mark(fmt.Sprintf("flag-%d", i), box+" "+title) + p.muted.Render("  "+ansi.Truncate(q.Question, w-lipgloss.Width(m.header(i))-6, "…")) + "\n")
+		switch {
+		case st.flagged && i == m.reasonQ:
+			b.WriteString(markLines("reason-box", indent(m.boxed(&m.reason, m.focus == fReason, w-2), 2)) + "\n")
+			draft := ""
+			switch {
+			case st.drafting:
+				draft = p.accent.Render(m.spin.View()) + p.muted.Italic(true).Render(" drafting…")
+			case len(st.thread) > 0:
+				draft = link("reason-draft", icBot+" Draft from my discussion")
+			}
+			if draft != "" {
+				b.WriteString(spread(w, "", draft) + "\n")
+			}
+		case st.flagged:
+			why := or(strings.TrimSpace(st.reason), "Say what is wrong…")
+			b.WriteString(indent(mark(fmt.Sprintf("why-%d", i), p.muted.Render("│ ")+wrap(why, w-6)), 2) + "\n")
+		}
+		b.WriteString("\n")
 	}
-	b.WriteString(spread(w, "", draft) + "\n")
-	box := "☐"
+	box := "\U000F0131"
 	if m.inclSum {
-		box = p.accent.Render("☑")
+		box = p.accent.Render("\U000F0135")
 	}
-	b.WriteString(mark("reason-incl", box+" Include my note from the discussion") + "\n")
-	b.WriteString(p.muted.Render(wrap("The whole set goes back: your answers to the other questions travel with it, so the agent can keep them when it asks again.", w)) + "\n\n")
+	b.WriteString(mark("reason-incl", box+" Include my notes from the discussions") + "\n")
+	b.WriteString(p.muted.Render(wrap("The whole set goes back. Your answers to the questions you did not tick travel with it, so the agent can keep them when it asks again.", w)) + "\n\n")
 	b.WriteString(spread(w, "", link("reason-cancel", "Cancel")+"    "+m.button("reason-send", "Send back ↩")))
 	return b.String()
 }

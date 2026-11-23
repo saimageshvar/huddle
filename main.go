@@ -73,7 +73,7 @@ func recordHistory(req *Request, resp Response, m *model) {
 	enc := json.NewEncoder(f)
 	for i := range req.Questions {
 		answer := m.answerText(i)
-		if resp.Kind == "reframe" && i == m.cur {
+		if resp.Kind == "reframe" && m.qs[i].flagged {
 			answer = "sent back with a reason"
 		}
 		_ = enc.Encode(historyEntry{time.Now(), filepath.Base(req.Cwd), m.header(i), answer})
