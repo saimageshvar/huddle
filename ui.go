@@ -120,6 +120,12 @@ func newModel(req *Request, dir string) *model {
 	m.qs = make([]qstate, len(req.Questions))
 	for i := range m.qs {
 		m.qs[i].picked = map[int]bool{}
+		for oi, o := range req.Questions[i].Options { // start on Claude's pick
+			if _, rec := stripRecommended(o.Label); rec {
+				m.qs[i].cursor = oi
+				break
+			}
+		}
 	}
 	m.chat = newInput("Ask a follow-up…", 1, 8)
 	m.notes = newInput("A note for the agent…", 2, 10)
@@ -1632,7 +1638,7 @@ func (m *model) viewReview() string {
 			b.WriteString(indent(p.muted.Render("– skipped · the agent is told you chose not to answer"), 3) + "\n")
 		} else {
 			g := p.accent.Render(choiceGlyph(m.req.Questions[i].MultiSelect, true)) + " "
-			b.WriteString(indent(g+strings.ReplaceAll(wrap(ans, w-6), "\n", "\n  "), 3) + "\n")
+			b.WriteString(indent(g+strings.ReplaceAll(wrap(m.answerShown(i), w-6), "\n", "\n  "), 3) + "\n")
 		}
 		switch {
 		case m.editNote == i && m.focus == fNote:
@@ -1863,3 +1869,25 @@ func (m *model) viewKeys() string {
 const skipped = "(skipped: the user chose not to answer this question)"
 
 var starters = []string{"Explain the options in plain words", "What would you pick, and why?", "What in the conversation led to this question?"}
+
+// answerShown is the answer as the screen shows it: "(Recommended)" becomes the green tag.
+// Claude still gets the raw label, which it matches exactly.
+func (m *model) answerShown(i int) string {
+	p := m.pal()
+	q := m.qs[i]
+	opts := m.req.Questions[i].Options
+	var parts []string
+	for oi := range opts {
+		if q.picked[oi] {
+			label, rec := stripRecommended(opts[oi].Label)
+			if rec {
+				label += " " + p.ok.Render("Recommended")
+			}
+			parts = append(parts, label)
+		}
+	}
+	if q.picked[len(opts)] && strings.TrimSpace(q.other) != "" {
+		parts = append(parts, strings.TrimSpace(q.other))
+	}
+	return strings.Join(parts, ", ")
+}
