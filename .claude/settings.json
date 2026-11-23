@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/huddle hook",
+            "command": "huddle hook",
             "timeout": 3600
           }
         ]
