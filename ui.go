@@ -26,7 +26,6 @@ const (
 	scrQuestion screen = iota
 	scrReview
 	scrReframe
-	scrExpired
 )
 
 type focus int
@@ -184,9 +183,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.flash != "" && time.Since(m.flashAt) > 4*time.Second {
 			m.flash = ""
 		}
-		if !m.expired && m.timeLeft() <= 0 || !m.expired && !alive(m.req.HookPID) {
-			m.expired = true
-			m.scr = scrExpired
+		if m.timeLeft() <= 0 || !alive(m.req.HookPID) { // the asking session stopped waiting: just close
+			m.stopAgent()
+			return m, tea.Quit
 		}
 		return m, tick()
 	case agentMsg:
@@ -303,15 +302,6 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	if s == "ctrl+c" {
 		m.stopAgent()
 		return tea.Quit
-	}
-	if m.scr == scrExpired {
-		if s == "enter" {
-			m.copyAll()
-		}
-		if s == "q" || s == "esc" {
-			return tea.Quit
-		}
-		return nil
 	}
 	if m.showKeys {
 		m.showKeys = false
@@ -645,7 +635,7 @@ func (m *model) answeredCount() (n int) {
 }
 
 func (m *model) submit() tea.Cmd {
-	if m.answeredCount() < len(m.qs) || m.expired {
+	if m.expired {
 		return nil
 	}
 	if m.drafting() && !m.sendAnyway {
@@ -655,7 +645,7 @@ func (m *model) submit() tea.Cmd {
 	}
 	resp := Response{Kind: "answer", Answers: map[string]string{}, Annotations: map[string]map[string]string{}}
 	for i, q := range m.req.Questions {
-		resp.Answers[q.Question] = m.answerText(i)
+		resp.Answers[q.Question] = or(m.answerText(i), skipped)
 		if n := strings.TrimSpace(m.qs[i].note); n != "" {
 			resp.Annotations[q.Question] = map[string]string{"notes": n}
 		}
@@ -742,27 +732,6 @@ func (m *model) startNote(i int) tea.Cmd {
 }
 
 func copyText(s string) { c := exec.Command("pbcopy"); c.Stdin = strings.NewReader(s); _ = c.Run() }
-
-func (m *model) copyAll() {
-	var b strings.Builder
-	for i, q := range m.req.Questions {
-		fmt.Fprintf(&b, "## %s\nQuestion: %s\nAnswer: %s\n", m.header(i), q.Question, or(m.answerText(i), "(none)"))
-		if n := m.qs[i].note; n != "" {
-			fmt.Fprintf(&b, "Note: %s\n", n)
-		}
-		for _, c := range m.qs[i].thread {
-			who := "Assistant"
-			if c.You {
-				who = "You"
-			}
-			fmt.Fprintf(&b, "\n%s: %s\n", who, c.Text)
-		}
-		b.WriteString("\n")
-	}
-	copyText(b.String())
-	m.flashAt, m.flash = time.Now(), "Copied. Paste it into the agent's terminal."
-}
-
 func or(s, d string) string {
 	if s == "" {
 		return d
@@ -901,10 +870,6 @@ func (m *model) action(id string) tea.Cmd {
 		return m.setFocus(fOptions)
 	case "keys":
 		m.showKeys = !m.showKeys
-	case "copyall":
-		m.copyAll()
-	case "close":
-		return tea.Quit
 	}
 	return nil
 }
@@ -1137,8 +1102,6 @@ func (m *model) View() tea.View {
 		} else {
 			body = m.viewQuestion()
 		}
-	case scrExpired:
-		body = m.viewExpired()
 	}
 	header := m.viewHeader()
 	footer := m.viewFooter()
@@ -1238,13 +1201,11 @@ func (m *model) viewFooter() string {
 		right = append(right, footItem{"next", label, label, 1})
 	case scrReview:
 		right = []footItem{{"back", "‹ Back", "‹", 0}}
-		if n := len(m.qs); m.answeredCount() < n {
-			right = append(right, footItem{"", fmt.Sprintf("Answer all %d questions to send", n), "Answer all", 2})
-		} else {
-			right = append(right, footItem{"submit", fmt.Sprintf("Send %d answers ✓", n), "Send ✓", 1})
+		label := fmt.Sprintf("Send %d answers ✓", len(m.qs))
+		if skip := len(m.qs) - m.answeredCount(); skip > 0 {
+			label = fmt.Sprintf("Send, skipping %d ✓", skip)
 		}
-	case scrExpired:
-		right = []footItem{{"close", "Close", "Close", 0}, {"copyall", "Copy answers and discussion", "Copy all", 1}}
+		right = append(right, footItem{"submit", label, "Send ✓", 1})
 	}
 	short := 0
 	for _, it := range right {
@@ -1614,7 +1575,7 @@ func (m *model) viewReview() string {
 		b.WriteString(spread(w, p.muted.Render(fmt.Sprintf("%d  ", i+1))+lipgloss.NewStyle().Bold(true).Render(m.header(i)), acts) + "\n")
 		ans := m.answerText(i)
 		if ans == "" {
-			b.WriteString(indent(p.warn.Render("▲ not answered yet"), 3) + "\n")
+			b.WriteString(indent(p.muted.Render("– skipped · the agent is told you chose not to answer"), 3) + "\n")
 		} else {
 			g := p.accent.Render(choiceGlyph(m.req.Questions[i].MultiSelect, true)) + " "
 			b.WriteString(indent(g+strings.ReplaceAll(wrap(ans, w-6), "\n", "\n  "), 3) + "\n")
@@ -1671,31 +1632,6 @@ func (m *model) viewReframe() string {
 	b.WriteString(spread(w, "", link("reason-cancel", "Cancel")+"    "+m.button("reason-send", "Send back ↩")))
 	return b.String()
 }
-
-func (m *model) viewExpired() string {
-	p := m.pal()
-	w := min(m.w-6, 92)
-	var b strings.Builder
-	b.WriteString("\n\n\n" + p.bad.Render("✗") + " " + lipgloss.NewStyle().Bold(true).Render("The agent stopped waiting") + "\n")
-	b.WriteString(p.muted.Render(wrap(filepath.Base(m.req.Cwd)+" moved on, so answers can no longer be sent. Your discussion is saved: copy it and paste it into the agent's terminal.", w)) + "\n\n")
-	b.WriteString(p.muted.Render("What you had so far") + "\n" + p.muted.Render(strings.Repeat("─", w)) + "\n")
-	for i := range m.qs {
-		msgs := len(m.qs[i].thread)
-		meta := fmt.Sprintf("%d messages", msgs)
-		if msgs == 0 {
-			meta = "no messages"
-		}
-		if m.qs[i].note != "" {
-			meta += " · note"
-		}
-		b.WriteString(spread(w, fmt.Sprintf("%-16s %s", m.header(i), or(m.answerText(i), p.muted.Render("no answer"))), p.muted.Render(meta)) + "\n")
-	}
-	b.WriteString(p.muted.Render(strings.Repeat("─", w)) + "\n")
-	return m.center(b.String(), w)
-}
-
-var starters = []string{"Explain the options in plain words", "What would you pick, and why?", "What in the conversation led to this question?"}
-
 func (m *model) anyLive() bool {
 	for _, q := range m.qs {
 		if n := len(q.thread); n > 0 && q.thread[n-1].Live {
@@ -1854,3 +1790,7 @@ func (m *model) viewKeys() string {
 	b.WriteString("\n" + p.muted.Render("Press any key or click Close.") + "   " + link("keys", "Close"))
 	return b.String()
 }
+
+const skipped = "(skipped: the user chose not to answer this question)"
+
+var starters = []string{"Explain the options in plain words", "What would you pick, and why?", "What in the conversation led to this question?"}
