@@ -94,7 +94,7 @@ func runHook() {
 	}
 	// The pane is created beside the asking session (so it lands in that tab), then floated over
 	// the tab like a modal. rex prints the new block id first; it stays out of the hook's output.
-	cmd := exec.Command("rex", "run", "-b", block, "--split=right", "--ratio", "60", "--focus=false",
+	cmd := exec.Command(rexBin(), "run", "-b", block, "--split=right", "--ratio", "60", "--focus=false",
 		"--wait", "--shell=none", "--", exe, "ask", dir)
 	stdout, err := cmd.StdoutPipe()
 	cmd.Stderr = io.Discard
@@ -178,7 +178,7 @@ func askingPane() (session, block string) {
 // float lifts the huddle pane into a floating layer over its tab; if Rex refuses, it stays a split.
 func float(session, block string) {
 	args, _ := json.Marshal(map[string]any{"session_id": session, "block_id": block, "bounds": []float64{0.04, 0.04, 0.92, 0.92}})
-	_ = exec.Command("rex", "api", "call", "session.float_block", string(args)).Run()
+	_ = exec.Command(rexBin(), "api", "call", "session.float_block", string(args)).Run()
 }
 
 func sessionTitle(transcript string) string {
@@ -220,4 +220,17 @@ func writeJSON(path string, v any) error {
 		return err
 	}
 	return os.WriteFile(path, b, 0o600)
+}
+
+// rexBin finds the rex CLI. Sessions run under hc (herdr-core) don't have it on PATH, so fall
+// back to where Rex installs it, as hc-rex does.
+func rexBin() string {
+	if p, err := exec.LookPath("rex"); err == nil {
+		return p
+	}
+	p := filepath.Join(os.Getenv("HOME"), "Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS/rex")
+	if exists(p) {
+		return p
+	}
+	return "rex"
 }
