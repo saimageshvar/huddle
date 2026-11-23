@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -61,8 +62,20 @@ func startAgent(req *Request, model, resume string) (*Agent, error) {
 	return a, nil
 }
 
-func (a *Agent) Send(req int, text string) error {
-	b, _ := json.Marshal(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": text}})
+// Send queues one user message; images go along as real image blocks the assistant can see.
+func (a *Agent) Send(req int, text string, images ...string) error {
+	var content any = text
+	if len(images) > 0 {
+		blocks := []map[string]any{{"type": "text", "text": text}}
+		for _, path := range images {
+			if data, err := pngBytes(path); err == nil {
+				blocks = append(blocks, map[string]any{"type": "image", "source": map[string]any{
+					"type": "base64", "media_type": "image/png", "data": base64.StdEncoding.EncodeToString(data)}})
+			}
+		}
+		content = blocks
+	}
+	b, _ := json.Marshal(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": content}})
 	a.mu.Lock()
 	a.queue = append(a.queue, req)
 	a.mu.Unlock()

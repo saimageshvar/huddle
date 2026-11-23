@@ -46,6 +46,7 @@ type chatMsg struct {
 	Live   bool
 	Failed bool
 	Copied bool
+	Images []string
 }
 
 type qstate struct {
@@ -83,6 +84,9 @@ type model struct {
 	sel        *selection
 	selDone    bool
 	frame      []string // last rendered lines, for copying a selection
+	img        *kitty
+	toSend     []string // image data waiting to go to the terminal
+	bigImage   string   // the image opened large, "" when none
 	bodyH      int      // rows between header and footer in the current frame
 	under      screen   // the screen an overlay is drawn over
 	showKeys   bool
@@ -118,7 +122,7 @@ const otherLabel = "Something else…"
 var clickables []string
 
 func newModel(req *Request, dir string) *model {
-	m := &model{req: req, dir: dir, dark: true, editNote: -1, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot)), model: "sonnet", reqs: map[int]*pending{}, md: map[string]string{}, inclSum: true}
+	m := &model{req: req, dir: dir, dark: true, img: newKitty(), editNote: -1, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot)), model: "sonnet", reqs: map[int]*pending{}, md: map[string]string{}, inclSum: true}
 	m.qs = make([]qstate, len(req.Questions))
 	for i := range m.qs {
 		m.qs[i].picked = map[int]bool{}
@@ -190,6 +194,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.md = map[string]string{}
 		return m, nil
+	case flushImages:
+		if len(m.toSend) == 0 {
+			return m, nil
+		}
+		out := strings.Join(m.toSend, "")
+		m.toSend = nil
+		return m, tea.Raw(out)
 	case tickMsg:
 		if m.flash != "" && time.Since(m.flashAt) > 4*time.Second {
 			m.flash = ""
@@ -314,8 +325,8 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		m.stopAgent()
 		return tea.Quit
 	}
-	if m.showKeys {
-		m.showKeys = false
+	if m.showKeys || m.bigImage != "" {
+		m.showKeys, m.bigImage = false, ""
 		return nil
 	}
 	if s == "?" && m.input() == nil {
@@ -456,9 +467,10 @@ func (m *model) submitInput() tea.Cmd {
 		}
 		m.chat.Reset()
 		q := &m.qs[m.cur]
-		q.thread = append(q.thread, chatMsg{You: true, Text: text}, chatMsg{Live: true, Status: "Starting…"})
+		imgs := imagesIn(text)
+		q.thread = append(q.thread, chatMsg{You: true, Text: text, Images: imgs}, chatMsg{Live: true, Status: "Starting…"})
 		m.threadOff = 0
-		return tea.Batch(m.ask(m.cur, "chat", fmt.Sprintf("[Q%d: %s] %s", m.cur+1, m.header(m.cur), text)), m.spin.Tick)
+		return tea.Batch(m.ask(m.cur, "chat", fmt.Sprintf("[Q%d: %s] %s", m.cur+1, m.header(m.cur), text), imgs...), m.spin.Tick)
 	case fOther:
 		if !m.req.Questions[m.cur].MultiSelect && strings.TrimSpace(m.otherIn.Value()) != "" {
 			return tea.Batch(m.setFocus(fOptions), m.next())
@@ -480,7 +492,7 @@ func (m *model) header(i int) string {
 }
 
 // ask sends a request to the side agent, starting it on first use.
-func (m *model) ask(q int, kind, text string) tea.Cmd {
+func (m *model) ask(q int, kind, text string, images ...string) tea.Cmd {
 	var cmd tea.Cmd
 	if m.agent == nil {
 		a, err := startAgent(m.req, m.model, "")
@@ -494,7 +506,7 @@ func (m *model) ask(q int, kind, text string) tea.Cmd {
 	id := m.nextReq
 	m.nextReq++
 	m.reqs[id] = &pending{q: q, kind: kind}
-	if err := m.agent.Send(id, text); err != nil {
+	if err := m.agent.Send(id, text, images...); err != nil {
 		m.fail(q, kind, "Could not reach the assistant: "+err.Error())
 	}
 	return cmd
@@ -849,6 +861,10 @@ func (m *model) click(msg tea.MouseClickMsg) tea.Cmd {
 }
 
 func (m *model) action(id string) tea.Cmd {
+	if path, ok := strings.CutPrefix(id, "img:"); ok {
+		m.bigImage, _, _ = strings.Cut(path, "#")
+		return nil
+	}
 	id, _, _ = strings.Cut(id, "#")
 	var a, b int
 	switch {
@@ -943,6 +959,8 @@ func (m *model) action(id string) tea.Cmd {
 	case "reason-cancel":
 		m.scr = m.under
 		return m.setFocus(fOptions)
+	case "close-image":
+		m.bigImage = ""
 	case "keys":
 		m.showKeys = !m.showKeys
 	}
@@ -1203,6 +1221,9 @@ func (m *model) View() tea.View {
 	case m.showKeys:
 		m.modalFrom = len(clickables)
 		page = m.overlay(page, m.viewKeys())
+	case m.bigImage != "":
+		m.modalFrom = len(clickables)
+		page = m.overlay(page, m.viewImage())
 	}
 	if m.flash != "" {
 		page = m.toast(page, m.flash)
@@ -1550,7 +1571,7 @@ func (m *model) viewOptions(w int) string {
 			if m.focus == fOther {
 				hint = "⏎ done · esc back to options"
 			}
-			text += "\n" + markLines("other-box", indent(m.boxed(&m.otherIn, m.focus == fOther, w-6), 6)) + "\n" + indent(p.muted.Render(hint), 7)
+			text += "\n" + markLines("other-box", indent(m.boxed(&m.otherIn, m.focus == fOther, w-6), 6)) + indent(m.thumbsFor(m.otherIn.Value(), w-8), 6) + "\n" + indent(p.muted.Render(hint), 7)
 		}
 		b.WriteString(text + "\n\n")
 	}
@@ -1586,7 +1607,7 @@ func (m *model) noteRow(w int, cursor, focused bool) string {
 	st := m.qs[m.cur]
 	if m.editNote == m.cur && m.focus == fNote {
 		head := p.accent.Render(icNote) + " " + lipgloss.NewStyle().Bold(true).Render("Note for the agent")
-		box := markLines("note-box", m.boxed(&m.notes, true, w-2))
+		box := markLines("note-box", m.boxed(&m.notes, true, w-2)) + m.thumbsFor(m.notes.Value(), w-4)
 		acts := link("note-clear", icClear+" Clear") + "    " + mark("note-done", p.accent.Bold(true).Render(icDone+" Done"))
 		if len(st.thread) > 0 {
 			acts = link("note-rewrite", icBot+" Rewrite with assistant") + "    " + acts
@@ -1638,7 +1659,11 @@ func (m *model) viewThread(w, h int) string {
 	}
 	for i, c := range st.thread {
 		if c.You {
-			b.WriteString(bar(p.muted, "│", lipgloss.NewStyle().Bold(true).Render("You")+"\n"+wrap(c.Text, w-3)))
+			you := lipgloss.NewStyle().Bold(true).Render("You") + "\n" + wrap(c.Text, w-3)
+			if len(c.Images) > 0 {
+				you += "\n" + m.thumbs(c.Images, w-4, 10)
+			}
+			b.WriteString(bar(p.muted, "│", you))
 		} else {
 			name := p.accent.Bold(true).Render("Assistant")
 			switch {
@@ -1663,7 +1688,7 @@ func (m *model) viewThread(w, h int) string {
 	if len(st.thread) == 0 {
 		m.chat.Placeholder = "Ask about this question"
 	}
-	input := markLines("chat-box", m.boxed(&m.chat, m.focus == fChat, w))
+	input := markLines("chat-box", m.boxed(&m.chat, m.focus == fChat, w)) + m.thumbsFor(m.chat.Value(), w-2)
 	footer := input + "\n" + spread(w, "", mark("send-chat", p.accent.Bold(true).Render(icSend+" Send")))
 	avail := h - lipgloss.Height(head) - lipgloss.Height(footer) - 1
 	lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
@@ -1716,7 +1741,7 @@ func (m *model) viewReview() string {
 		switch {
 		case m.editNote == i && m.focus == fNote:
 			head := p.accent.Render(icNote) + " " + lipgloss.NewStyle().Bold(true).Render("Note for the agent")
-			box := markLines("note-box", m.boxed(&m.notes, true, w-3))
+			box := markLines("note-box", m.boxed(&m.notes, true, w-3)) + m.thumbsFor(m.notes.Value(), w-5)
 			acts := link("note-rewrite", icBot+" Rewrite with assistant") + "    " + link("note-clear", icClear+" Clear") + "    " + mark("note-done", p.accent.Bold(true).Render(icDone+" Done"))
 			b.WriteString("\n" + indent(head+"\n"+box+"\n"+spread(w-3, "", acts), 3) + "\n")
 		case st.drafting:
@@ -1759,7 +1784,7 @@ func (m *model) viewReframe() string {
 		b.WriteString(mark(fmt.Sprintf("flag-%d", i), box+" "+title) + p.muted.Render("  "+ansi.Truncate(q.Question, w-lipgloss.Width(m.header(i))-6, "…")) + "\n")
 		switch {
 		case st.flagged && i == m.reasonQ:
-			b.WriteString(markLines("reason-box", indent(m.boxed(&m.reason, m.focus == fReason, w-2), 2)) + "\n")
+			b.WriteString(markLines("reason-box", indent(m.boxed(&m.reason, m.focus == fReason, w-2), 2)) + indent(m.thumbsFor(m.reason.Value(), w-4), 2) + "\n")
 			draft := ""
 			switch {
 			case st.drafting:
@@ -1895,7 +1920,7 @@ func (m *model) overlay(page, card string) string {
 	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(ld(lipgloss.Color("7"), lipgloss.Color("240"))).Padding(min(1, max(0, (m.h-lipgloss.Height(card)-4)/2)), 3).Render(card)
 	faded := strings.Split(page, "\n") // the page recedes behind the card
 	for i, l := range faded {
-		faded[i] = m.pal().muted.Faint(true).Render(ansi.Strip(l))
+		faded[i] = m.pal().muted.Faint(true).Render(blankImages(ansi.Strip(l)))
 	}
 	page = strings.Join(faded, "\n")
 	return splice(page, box, max(0, (m.w-lipgloss.Width(box))/2), max(1, (m.h-lipgloss.Height(box))/2))
@@ -1971,4 +1996,74 @@ func (m *model) answerShown(i int) string {
 		parts = append(parts, strings.TrimSpace(q.other))
 	}
 	return strings.Join(parts, ", ")
+}
+
+type flushImages struct{}
+
+// prog lets drawing ask the program to send image data the frame needs.
+var prog *tea.Program
+
+// thumbs draws images as clickable thumbnails, each at most maxCols x maxRows cells.
+func (m *model) thumbs(paths []string, maxCols, maxRows int) string {
+	p := m.pal()
+	var out []string
+	for _, path := range paths {
+		cols, rows := m.img.size(path, min(maxCols, 60), maxRows)
+		if cols == 0 {
+			continue
+		}
+		send, block := m.img.place(path, cols, rows)
+		if block == "" {
+			continue
+		}
+		if send != "" {
+			m.toSend = append(m.toSend, send)
+			if prog != nil {
+				go prog.Send(flushImages{})
+			}
+		}
+		out = append(out, markLines("img:"+path, block)+"\n"+p.muted.Render(filepath.Base(path)+" · click to enlarge"))
+	}
+	return strings.Join(out, "\n")
+}
+
+// thumbsFor shows thumbnails of any images pasted into a text box, under it.
+func (m *model) thumbsFor(text string, w int) string {
+	if paths := imagesIn(text); len(paths) > 0 {
+		return "\n" + m.thumbs(paths, w, 8)
+	}
+	return ""
+}
+
+func (m *model) viewImage() string {
+	p := m.pal()
+	cols, rows := m.img.size(m.bigImage, m.w-14, m.h-10)
+	send, block := m.img.place(m.bigImage, cols, rows)
+	if send != "" {
+		m.toSend = append(m.toSend, send)
+		if prog != nil {
+			go prog.Send(flushImages{})
+		}
+	}
+	return block + "\n\n" + spread(cols, p.muted.Render(filepath.Base(m.bigImage)), link("close-image", "Close"))
+}
+
+// blankImages turns image placeholders into spaces, for text that has lost the colour naming the image.
+func blankImages(s string) string {
+	if !strings.ContainsRune(s, placeholder) {
+		return s
+	}
+	marks := map[rune]bool{}
+	for _, d := range diacritics {
+		marks[d] = true
+	}
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == placeholder:
+			return ' '
+		case marks[r]:
+			return -1
+		}
+		return r
+	}, s)
 }

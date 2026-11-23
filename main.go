@@ -52,7 +52,8 @@ func runAsk(dir string) error {
 	_ = exec.Command("afplay", "/System/Library/Sounds/Glass.aiff").Start() // a quiet chime: the pane opens without focus
 	zone.NewGlobal()
 	m := newModel(&req, dir)
-	_, err = tea.NewProgram(m).Run()
+	prog = tea.NewProgram(m)
+	_, err = prog.Run()
 	m.stopAgent()
 	return err
 }
