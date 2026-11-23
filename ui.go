@@ -40,12 +40,12 @@ const (
 )
 
 type chatMsg struct {
-	You     bool
-	Text    string
-	Status  string // what the assistant is doing right now
-	Live    bool
-	Failed  bool
-	Copied  bool
+	You    bool
+	Text   string
+	Status string // what the assistant is doing right now
+	Live   bool
+	Failed bool
+	Copied bool
 }
 
 type qstate struct {
@@ -69,36 +69,36 @@ type pending struct {
 }
 
 type model struct {
-	req       *Request
-	dir       string
-	w, h      int
-	dark      bool
-	bg        color.Color
-	spin      spinner.Model
+	req        *Request
+	dir        string
+	w, h       int
+	dark       bool
+	bg         color.Color
+	spin       spinner.Model
 	sendAnyway bool
 	sel        *selection
 	selDone    bool
 	frame      []string // last rendered lines, for copying a selection
-	scr       screen
-	cur       int // question in focus
-	qs        []qstate
-	focus     focus
-	askTab    bool // narrow layout: showing "Ask about it"
-	editNote  int  // review: question whose note is being edited, -1 none
-	chat      textarea.Model
-	notes     textarea.Model
-	otherIn   textarea.Model
-	reason    textarea.Model
-	inclSum   bool
-	agent     *Agent
-	model     string
-	reqs      map[int]*pending
-	nextReq   int
-	leftOff   int
-	threadOff int // lines scrolled up from the bottom
-	md        map[string]string
-	flash     string
-	expired   bool
+	scr        screen
+	cur        int // question in focus
+	qs         []qstate
+	focus      focus
+	askTab     bool // narrow layout: showing "Ask about it"
+	editNote   int  // review: question whose note is being edited, -1 none
+	chat       textarea.Model
+	notes      textarea.Model
+	otherIn    textarea.Model
+	reason     textarea.Model
+	inclSum    bool
+	agent      *Agent
+	model      string
+	reqs       map[int]*pending
+	nextReq    int
+	leftOff    int
+	threadOff  int // lines scrolled up from the bottom
+	md         map[string]string
+	flash      string
+	expired    bool
 }
 
 type tickMsg time.Time
@@ -278,7 +278,6 @@ func (m *model) setFocus(f focus) tea.Cmd {
 	return nil
 }
 
-
 func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	s := k.String()
 	if s == "ctrl+c" {
@@ -397,7 +396,6 @@ func (m *model) toggleTab() tea.Cmd {
 	}
 	return m.setFocus(fChat)
 }
-
 
 func (m *model) pick(qi, oi int) tea.Cmd {
 	q := &m.qs[qi]
@@ -906,9 +904,19 @@ func choiceGlyph(multi, on bool) string {
 	return "\U000F043D" // radiobox-blank
 }
 
-func (m *model) wide() bool     { return m.w >= 130 }
-func (m *model) leftWidth() int { if m.wide() { return m.w * 56 / 100 }; return m.w }
-func (m *model) chatWidth() int { if m.wide() { return m.w - m.leftWidth() - 3 }; return m.w - 4 }
+func (m *model) wide() bool { return m.w >= 130 }
+func (m *model) leftWidth() int {
+	if m.wide() {
+		return m.w * 56 / 100
+	}
+	return m.w
+}
+func (m *model) chatWidth() int {
+	if m.wide() {
+		return m.w - m.leftWidth() - 3
+	}
+	return m.w - 4
+}
 
 // ---------- rendering helpers ----------
 
@@ -1187,7 +1195,6 @@ func (m *model) keyBar(w int) string {
 	return strings.Join(parts, p.muted.Render("  ·  "))
 }
 
-
 func (m *model) renderFoot(items []footItem, stage int, dropHints bool) string {
 	p := m.pal()
 	var parts []string
@@ -1298,7 +1305,6 @@ func (m *model) tint(block string, w int, on bool) string {
 	return strings.Join(lines, "\n")
 }
 
-
 func (m *model) viewOptions(w int) string {
 	p := m.pal()
 	q := m.req.Questions[m.cur]
@@ -1403,7 +1409,6 @@ func (m *model) noteRow(w int, cursor, focused bool) string {
 	body := p.muted.Render("│") + " " + strings.ReplaceAll(wrap(st.note, w-6), "\n", "\n"+p.muted.Render("│")+" ")
 	return m.row(mark("note-row#0", head)+"\n"+indent(body, 2), cursor, focused) + "\n"
 }
-
 
 // boxed draws an input in a rounded border exactly w cells wide.
 func (m *model) boxed(t *textarea.Model, focused bool, w int) string {
