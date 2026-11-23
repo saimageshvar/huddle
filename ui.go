@@ -109,7 +109,7 @@ const otherLabel = "Something else…"
 var clickables []string
 
 func newModel(req *Request, dir string) *model {
-	m := &model{req: req, dir: dir, dark: true, editNote: -1, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot)), model: "sonnet", reqs: map[int]*pending{}, md: map[string]string{}, inclSum: true}
+	m := &model{req: req, dir: dir, dark: systemDark(), editNote: -1, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot)), model: "sonnet", reqs: map[int]*pending{}, md: map[string]string{}, inclSum: true}
 	m.qs = make([]qstate, len(req.Questions))
 	for i := range m.qs {
 		m.qs[i].picked = map[int]bool{}
@@ -129,6 +129,7 @@ func newInput(placeholder string, minH, maxH int) textarea.Model {
 	t.DynamicHeight, t.MinHeight, t.MaxHeight, t.MaxContentHeight = true, minH, maxH, 10000
 	t.CharLimit = 0
 	t.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("shift+enter", "alt+enter", "ctrl+j"))
+	t.SetStyles(inputStyles(systemDark()))
 	return t
 }
 
@@ -938,11 +939,20 @@ func (m *model) pal() palette {
 	}
 }
 
+// inputStyles keeps text boxes on the terminal's own colours: no line band, default text colour.
 func inputStyles(dark bool) textarea.Styles {
 	s := textarea.DefaultStyles(dark)
-	s.Focused.CursorLine = lipgloss.NewStyle()
-	s.Blurred.CursorLine = lipgloss.NewStyle()
+	for _, st := range []*textarea.StyleState{&s.Focused, &s.Blurred} {
+		st.Base, st.CursorLine, st.Text, st.EndOfBuffer = lipgloss.NewStyle(), lipgloss.NewStyle(), lipgloss.NewStyle(), lipgloss.NewStyle()
+		st.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	}
 	return s
+}
+
+// systemDark guesses the theme from macOS appearance until the terminal reports its background.
+func systemDark() bool {
+	out, _ := exec.Command("defaults", "read", "-g", "AppleInterfaceStyle").Output()
+	return strings.Contains(string(out), "Dark")
 }
 
 func mark(id, s string) string { clickables = append(clickables, id); return zone.Mark(id, s) }
