@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 
 	"encoding/json"
 	"fmt"
@@ -70,9 +71,11 @@ func runHook() {
 	if json.Unmarshal(in.ToolInput, &input) != nil || len(input.Questions) == 0 {
 		return
 	}
-	gui := os.Getenv("HUDDLE_GUI")
+	if wantsGUI(in.SessionID) && runGUIHook(raw) {
+		return
+	}
 	session, block := askingPane()
-	if block == "" && gui == "" {
+	if block == "" {
 		return
 	}
 	pruneCalls()
@@ -92,11 +95,6 @@ func runHook() {
 	}
 	exe, err := os.Executable()
 	if err != nil {
-		return
-	}
-	if gui != "" {
-		_ = exec.Command(gui, dir).Run()
-		finish(dir, in.ToolInput)
 		return
 	}
 	// The pane is created beside the asking session (so it lands in that tab), then floated over
@@ -144,6 +142,24 @@ func finish(dir string, rawInput json.RawMessage) {
 		return
 	}
 	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"hookSpecificOutput": out})
+}
+
+// wantsGUI is true for HUDDLE_UI=gui, or for a session listed in ~/.huddle/gui-sessions.
+func wantsGUI(sid string) bool {
+	return os.Getenv("HUDDLE_UI") == "gui" || (sid != "" && exists(filepath.Join(huddleHome(), "gui-sessions", sid)))
+}
+
+// runGUIHook hands the call to the Swift hook helper linked at ~/.huddle/gui-hook; false means it is missing, so the TUI carries on.
+func runGUIHook(raw []byte) bool {
+	helper := filepath.Join(huddleHome(), "gui-hook")
+	if !exists(helper) {
+		return false
+	}
+	cmd := exec.Command(helper)
+	cmd.Env = append(os.Environ(), "HUDDLE_UI=gui")
+	cmd.Stdin = bytes.NewReader(raw)
+	cmd.Stdout = os.Stdout
+	return cmd.Run() == nil
 }
 
 // stepAside reports whether away mode or hap full mode owns questions for this session.
