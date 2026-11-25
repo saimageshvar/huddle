@@ -70,8 +70,9 @@ func runHook() {
 	if json.Unmarshal(in.ToolInput, &input) != nil || len(input.Questions) == 0 {
 		return
 	}
+	gui := os.Getenv("HUDDLE_GUI")
 	session, block := askingPane()
-	if block == "" {
+	if block == "" && gui == "" {
 		return
 	}
 	pruneCalls()
@@ -93,6 +94,11 @@ func runHook() {
 	if err != nil {
 		return
 	}
+	if gui != "" {
+		_ = exec.Command(gui, dir).Run()
+		finish(dir, in.ToolInput)
+		return
+	}
 	// The pane is created beside the asking session (so it lands in that tab), then floated over
 	// the tab like a modal. rex prints the new block id first; it stays out of the hook's output.
 	cmd := exec.Command(rexBin(), "run", "-b", block, "--split=right", "--ratio", "60", "--focus=false",
@@ -110,7 +116,11 @@ func runHook() {
 	}
 	_, _ = io.Copy(io.Discard, stdout)
 	_ = cmd.Wait()
+	finish(dir, in.ToolInput)
+}
 
+// finish turns the pane's (or GUI's) response.json into the hook's decision on stdout.
+func finish(dir string, rawInput json.RawMessage) {
 	var resp Response
 	b, err := os.ReadFile(filepath.Join(dir, "response.json"))
 	if err != nil || json.Unmarshal(b, &resp) != nil {
@@ -123,7 +133,7 @@ func runHook() {
 		out["permissionDecisionReason"] = "The user sent this question back instead of answering it:\n\n" + resp.Reason
 	case "answer":
 		var toolInput map[string]any
-		_ = json.Unmarshal(in.ToolInput, &toolInput)
+		_ = json.Unmarshal(rawInput, &toolInput)
 		toolInput["answers"] = resp.Answers
 		if len(resp.Annotations) > 0 {
 			toolInput["annotations"] = resp.Annotations
