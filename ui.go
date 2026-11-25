@@ -1858,6 +1858,17 @@ func (s *selection) span(y, width int) (int, int, bool) {
 	return from, to, from < to
 }
 
+// tight narrows a line's selected columns to its visible text, so blank padding and pane rules stay unselected.
+func tight(l string, a, b int) (int, int, bool) {
+	seg := ansi.Strip(ansi.Cut(l, a, b))
+	text := strings.Trim(seg, " ─│")
+	if text == "" {
+		return 0, 0, false
+	}
+	lead := ansi.StringWidth(seg[:len(seg)-len(strings.TrimLeft(seg, " ─│"))])
+	return a + lead, a + lead + ansi.StringWidth(text), true
+}
+
 func (m *model) highlight(content string) string {
 	if m.sel == nil || !m.sel.dragged {
 		return content
@@ -1869,6 +1880,9 @@ func (m *model) highlight(content string) string {
 		if !ok {
 			continue
 		}
+		if a, b, ok = tight(l, a, b); !ok {
+			continue
+		}
 		lines[y] = ansi.Truncate(l, a, "") + rev.Render(ansi.Strip(ansi.Cut(l, a, b))) + ansi.TruncateLeft(l, b, "")
 	}
 	return strings.Join(lines, "\n")
@@ -1878,6 +1892,9 @@ func (m *model) selectedText() string {
 	var out []string
 	for y, l := range m.frame {
 		if a, b, ok := m.sel.span(y, m.w+2*m.padX); ok {
+			if a, b, ok = tight(l, a, b); !ok {
+				continue
+			}
 			line := strings.TrimSpace(blankImages(ansi.Strip(ansi.Cut(l, a, b))))
 			for _, deco := range []string{"▌", "▎", "│"} { // speaker and cursor bars are decoration
 				line = strings.TrimSpace(strings.TrimPrefix(line, deco))
