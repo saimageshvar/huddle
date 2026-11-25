@@ -84,10 +84,7 @@ struct DetailView: View {
             }.foregroundColor(T.muted)
             Spacer()
             if call.live {
-                HStack(spacing: 5) {
-                    Image(systemName: "clock")
-                    Text("\(max(1, Int(store.remaining(call) / 60))) min left")
-                }.foregroundColor(T.muted)
+                ClockBadge(text: "\(max(1, Int(store.remaining(call) / 60))) min left", warn: store.remaining(call) < 300)
                 OutlineButton(title: "Send back…", icon: "arrow.uturn.left") { openSendBack() }
             }
         }.padding(.horizontal, 20).padding(.vertical, 14)

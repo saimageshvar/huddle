@@ -230,3 +230,15 @@ struct AttachArea: View {
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(T.border))
     }
 }
+
+/// The deadline mark shared by the inbox row and the call header, so both read the same.
+struct ClockBadge: View {
+    let text: String
+    var warn = false
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: warn ? "exclamationmark.triangle.fill" : "clock").font(.caption)
+            Text(text).font(.callout.monospacedDigit())
+        }
+    }
+}

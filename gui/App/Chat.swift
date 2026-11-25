@@ -6,21 +6,12 @@ final class PrefsObject: ObservableObject {
     @Published var effort = Prefs.effort { didSet { Prefs.effort = effort } }
 }
 
-let effortNotes: [String: String] = [
-    "low": "Answers from the question text with little reading of the conversation.",
-    "medium": "Reads the relevant part of the conversation, then answers.",
-    "high": "Reads more of the conversation and checks the code before answering.",
-    "max": "Reads everything it needs and reasons the longest. Slowest.",
-]
-
 struct ChatPane: View {
     @ObservedObject var call: CallModel
     let i: Int
     var zoomed = false
     @ObservedObject var prefs = PrefsObject.shared
     @ObservedObject var layout = LayoutState.shared
-    @StateObject var modelPop = Flag()
-    @StateObject var effortPop = Flag()
 
     var thread: [ChatMsg] { call.threads[i] }
     var busy: Bool { thread.last?.live == true }
@@ -53,21 +44,35 @@ struct ChatPane: View {
         }.padding(.horizontal, 16).padding(.vertical, 10)
     }
 
+    /// One pill for model and effort; each model opens a submenu to the right with the efforts.
     var pickers: some View {
-        HStack(spacing: 8) {
-            pickerButton("cpu", "Model · \(Prefs.modelName(prefs.model))", modelPop)
-                .popover(isPresented: $modelPop.on, arrowEdge: .bottom) { ModelMenu(prefs: prefs) }
-            pickerButton("gauge.with.needle", "Effort · \(prefs.effort.capitalized)", effortPop)
-                .popover(isPresented: $effortPop.on, arrowEdge: .bottom) { EffortMenu(prefs: prefs) }
+        Menu {
+            ForEach(Prefs.models, id: \.id) { m in
+                Menu((prefs.model == m.id ? "✓ " : "") + m.name + " — " + m.note) {
+                    ForEach(Prefs.efforts, id: \.self) { e in
+                        Button {
+                            prefs.model = m.id
+                            prefs.effort = e
+                        } label: {
+                            let on = prefs.model == m.id && prefs.effort == e
+                            Text((on ? "✓ " : "") + e.capitalized + (e == "medium" ? " — Reads the relevant part of the conversation, then answers." : ""))
+                        }
+                    }
+                }
+            }
+            Divider()
+            Button("Reset to default (Sonnet 5.5 · Medium)") { prefs.model = "sonnet"; prefs.effort = "medium" }
+            Text("Applies from your next message")
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "cpu")
+                Text("\(Prefs.modelName(prefs.model)) · \(prefs.effort.capitalized)").lineLimit(1)
+                Image(systemName: "chevron.down").font(.caption)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(T.border))
         }
-    }
-
-    func pickerButton(_ icon: String, _ title: String, _ flag: Flag) -> some View {
-        Button { flag.on.toggle() } label: {
-            HStack(spacing: 6) { Image(systemName: icon); Text(title).lineLimit(1); Image(systemName: "chevron.down").font(.caption) }
-                .padding(.horizontal, 10).padding(.vertical, 6)
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(flag.on ? T.ink : T.border, lineWidth: flag.on ? 2 : 1))
-        }.buttonStyle(.plain)
+        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
     }
 
     var messages: some View {
@@ -111,68 +116,6 @@ struct ChatPane: View {
         }
         .padding(12)
         .disabled(!call.live)
-    }
-}
-
-struct ModelMenu: View {
-    @ObservedObject var prefs: PrefsObject
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("MODEL").font(.caption.weight(.semibold)).foregroundColor(T.muted).padding(.leading, 8)
-            ForEach(Prefs.models, id: \.id) { m in
-                let sel = prefs.model == m.id
-                Button { prefs.model = m.id } label: {
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "checkmark").opacity(sel ? 1 : 0).frame(width: 16)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(m.name).fontWeight(.semibold)
-                            Text(m.note).font(.callout).foregroundColor(T.muted)
-                        }
-                        Spacer()
-                    }.padding(8).background(RoundedRectangle(cornerRadius: 8).fill(sel ? T.faint : Color.clear)).contentShape(Rectangle())
-                }.buttonStyle(.plain)
-            }
-            Divider()
-            HStack {
-                Text("Used for this app").font(.callout).foregroundColor(T.muted)
-                Spacer()
-                LinkButton(title: "Reset to default") { prefs.model = "sonnet" }
-            }.padding(.horizontal, 8)
-            Text("The change applies from your next message. The thread is kept.").font(.caption).foregroundColor(T.muted).padding(.horizontal, 8)
-        }.padding(12).frame(width: 320)
-    }
-}
-
-struct EffortMenu: View {
-    @ObservedObject var prefs: PrefsObject
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("EFFORT").font(.caption.weight(.semibold)).foregroundColor(T.muted).padding(.leading, 4)
-            HStack(spacing: 0) {
-                ForEach(Prefs.efforts, id: \.self) { e in
-                    let sel = prefs.effort == e
-                    Button { prefs.effort = e } label: {
-                        Text(e.capitalized).frame(maxWidth: .infinity).padding(.vertical, 8)
-                            .foregroundColor(sel ? T.inkText : T.ink).background(sel ? T.ink : Color.clear)
-                    }.buttonStyle(.plain)
-                }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 8)).overlay(RoundedRectangle(cornerRadius: 8).stroke(T.border))
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "checkmark").frame(width: 16)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(prefs.effort.capitalized).fontWeight(.semibold)
-                    Text(effortNotes[prefs.effort] ?? "").font(.callout).foregroundColor(T.muted)
-                }
-                Spacer()
-            }.padding(8).background(RoundedRectangle(cornerRadius: 8).fill(T.faint))
-            Divider()
-            HStack {
-                Text("Higher is slower and costs more").font(.callout).foregroundColor(T.muted)
-                Spacer()
-                LinkButton(title: "Reset to default") { prefs.effort = "medium" }
-            }.padding(.horizontal, 4)
-        }.padding(12).frame(width: 320)
     }
 }
 

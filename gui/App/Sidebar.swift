@@ -83,10 +83,7 @@ struct InboxRow: View {
         case .cancelled: Text("Cancelled").font(.callout).foregroundColor(T.muted)
         default:
             let left = store.remaining(call)
-            HStack(spacing: 4) {
-                Image(systemName: left < 300 ? "exclamationmark.triangle.fill" : "clock").font(.caption)
-                Text(clock(left)).font(.callout.monospacedDigit())
-            }
+            ClockBadge(text: clock(left), warn: left < 300)
         }
     }
 }
