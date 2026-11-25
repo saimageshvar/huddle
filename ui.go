@@ -595,7 +595,7 @@ func (m *model) draftNote(q int) tea.Cmd {
 		return nil
 	}
 	s.drafting, s.draftedAt = true, len(s.thread)
-	return m.ask(q, "note", fmt.Sprintf("[DRAFT NOTE Q%d] Write the note for question %d (%s).", q+1, q+1, m.header(q)))
+	return m.ask(q, "note", fmt.Sprintf("[DRAFT NOTE Q%d: %s] (user's current answer: %s) Write the note.", q+1, m.header(q), or(m.answerText(q), "none yet")))
 }
 
 func (m *model) goTo(i int) tea.Cmd {
@@ -952,7 +952,7 @@ func (m *model) action(id string) tea.Cmd {
 	case "reason-draft":
 		if q := m.reasonQ; q >= 0 && len(m.qs[q].thread) > 0 && !m.qs[q].drafting {
 			m.qs[q].drafting = true
-			return m.ask(q, "reason", fmt.Sprintf("[DRAFT REASON Q%d] Write why question %d should be asked differently.", q+1, q+1))
+			return m.ask(q, "reason", fmt.Sprintf("[DRAFT REASON Q%d: %s] Write why question %d should be asked differently.", q+1, m.header(q), q+1))
 		}
 	case "reason-incl":
 		m.inclSum = !m.inclSum
