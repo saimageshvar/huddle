@@ -123,7 +123,7 @@ const otherLabel = "Something else…"
 var clickables []string
 
 func newModel(req *Request, dir string) *model {
-	m := &model{req: req, dir: dir, dark: true, img: newKitty(), editNote: -1, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot)), model: "sonnet", reqs: map[int]*pending{}, md: map[string]string{}, inclSum: true}
+	m := &model{req: req, dir: dir, dark: true, img: newKitty(), editNote: -1, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot)), model: "sonnet", reqs: map[int]*pending{}, md: map[string]string{}}
 	m.qs = make([]qstate, len(req.Questions))
 	for i := range m.qs {
 		m.qs[i].picked = map[int]bool{}
@@ -1790,7 +1790,7 @@ func (m *model) viewReframe() string {
 		b.WriteString("\n")
 	}
 	box := m.marker(true, m.inclSum)
-	b.WriteString(mark("reason-incl", box+" Include my notes for the agent") + "\n")
+	b.WriteString(mark("reason-incl", box+" Also include the discussion summary (drafted by the side agent)") + "\n")
 	b.WriteString(p.muted.Render(wrap("Your answers to the other questions go back too, so the agent can keep them.", w)) + "\n\n")
 	b.WriteString(spread(w, "", link("reason-cancel", "Cancel")+"    "+m.button("reason-send", "Send back")))
 	return b.String()
