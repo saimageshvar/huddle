@@ -10,7 +10,7 @@ struct ReviewView: View {
                     Spacer()
                     Text("\(call.answeredCount) answered · \(call.skippedCount) skipped").foregroundColor(T.muted)
                 }
-                Text("Edit anything before sending.").foregroundColor(T.muted)
+                Text("Notes are drafted from your chats. Edit anything before sending.").foregroundColor(T.muted)
                 ForEach(0..<call.q.count, id: \.self) { i in ReviewRow(call: call, i: i) }
             }.padding(20).frame(maxWidth: 820, alignment: .leading)
         }.frame(maxWidth: .infinity)
@@ -37,7 +37,7 @@ struct ReviewRow: View {
                     }
                 }
                 Spacer()
-                OutlineButton(title: editing ? "Done" : (call.answered(i) ? "Edit" : "Answer")) { toggle(i) }
+                OutlineButton(title: editing ? "Done" : (call.answered(i) ? "Edit" : "Answer"), icon: call.answered(i) || editing ? "pencil" : nil) { toggle(i) }
             }
             if editing {
                 Divider()
@@ -51,7 +51,7 @@ struct ReviewRow: View {
                 OtherCard(call: call, i: i)
                 HStack {
                     LinkButton(title: "Clear answer") { call.clear(i) }
-                    LinkButton(title: "Open question") { call.tab = i }
+                    LinkButton(title: "↗ Open question for previews and chat") { call.tab = i }
                 }
             }
             if editing || !call.q[i].note.isEmpty {
@@ -59,7 +59,10 @@ struct ReviewRow: View {
             } else {
                 HStack(spacing: 12) {
                     LinkButton(title: "Add note") { call.reviewEditing.insert(i) }
-                    if !call.threads[i].isEmpty { LinkButton(title: "✦ Draft from discussion") { call.draftNote(i) } }
+                    if !call.threads[i].isEmpty {
+                        LinkButton(title: "✦ Draft from discussion") { call.draftNote(i) }
+                        Text("Asks before replacing your note, and you can undo.").font(.callout).foregroundColor(T.muted)
+                    }
                 }
             }
         }
@@ -76,29 +79,35 @@ struct ReviewRow: View {
 struct SendBackSheet: View {
     @ObservedObject var store: Store
     @ObservedObject var call: CallModel
+
+    var sheetRows: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(0..<call.q.count, id: \.self) { i in
+                Toggle(isOn: $call.q[i].flagged) {
+                    HStack(spacing: 6) {
+                        Text(call.header(i)).fontWeight(.semibold)
+                        Text(call.request.questions[i].question.replacingOccurrences(of: "\n", with: " ")).lineLimit(1).foregroundColor(T.muted)
+                    }
+                }
+                if call.q[i].flagged {
+                    BoxedTextArea(text: $call.q[i].reason, placeholder: "What is wrong with the question?", minHeight: 70)
+                    if call.q[i].drafting { Text("drafting…").foregroundColor(T.muted) }
+                    else if !call.threads[i].isEmpty { LinkButton(title: "✦ Draft from my discussion") { call.draftReason(i) } }
+                }
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     var body: some View {
         ZStack {
             Color.black.opacity(0.3).onTapGesture { }
             VStack(alignment: .leading, spacing: 12) {
                 HStack { Image(systemName: "arrow.uturn.left"); Text("Send questions back").font(.title3.bold()) }
                 Text("Tick the questions that are wrong and say why. The agent will ask again.").foregroundColor(T.muted)
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 10) {
-                        ForEach(0..<call.q.count, id: \.self) { i in
-                            Toggle(isOn: $call.q[i].flagged) {
-                                HStack(spacing: 6) {
-                                    Text(call.header(i)).fontWeight(.semibold)
-                                    Text(call.request.questions[i].question.replacingOccurrences(of: "\n", with: " ")).lineLimit(1).foregroundColor(T.muted)
-                                }
-                            }
-                            if call.q[i].flagged {
-                                BoxedTextArea(text: $call.q[i].reason, placeholder: "What is wrong with the question?", minHeight: 70)
-                                if call.q[i].drafting { Text("drafting…").foregroundColor(T.muted) }
-                                else if !call.threads[i].isEmpty { LinkButton(title: "✦ Draft from my discussion") { call.draftReason(i) } }
-                            }
-                        }
-                    }
-                }.frame(maxHeight: 360)
+                ViewThatFits(in: .vertical) {
+                    sheetRows
+                    ScrollView { sheetRows }
+                }.frame(maxHeight: 420)
                 Text("Your answers to the other questions go back too, so the agent can keep them.").font(.callout).foregroundColor(T.muted)
                 HStack {
                     Spacer()

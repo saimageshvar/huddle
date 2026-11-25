@@ -2,15 +2,19 @@ import SwiftUI
 
 struct RootView: View {
     @ObservedObject var store: Store
+    @ObservedObject var layout = LayoutState.shared
     var body: some View {
-        HStack(spacing: 0) {
-            Sidebar(store: store).frame(width: 250)
-            Divider()
-            if let c = store.current {
-                DetailView(store: store, call: c).id(c.id)
-            } else {
-                Text("Listening in the menu bar").foregroundColor(T.muted).frame(maxWidth: .infinity, maxHeight: .infinity)
+        ZStack {
+            HStack(spacing: 0) {
+                if layout.zoomed { Rail(store: store) } else { Sidebar(store: store).frame(width: 250) }
+                Divider()
+                if let c = store.current {
+                    DetailView(store: store, call: c).id(c.id)
+                } else {
+                    Text("Listening in the menu bar").foregroundColor(T.muted).frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
+            if let c = store.current, c.sendBackOpen { SendBackSheet(store: store, call: c) }
         }
     }
 }
@@ -51,8 +55,6 @@ struct InboxRow: View {
                 HStack(alignment: .firstTextBaseline) {
                     Text(call.sessionName).fontWeight(.semibold).lineLimit(1)
                         .foregroundColor(dead ? T.muted : T.ink)
-                    Spacer(minLength: 4)
-                    trailing
                 }
                 Text(call.request.branch.isEmpty ? call.repo : "\(call.request.branch) · \(call.repo)")
                     .font(.callout).foregroundColor(T.muted).lineLimit(1)
@@ -64,6 +66,8 @@ struct InboxRow: View {
                         Text("·").foregroundColor(T.muted)
                         LinkButton(title: "Dismiss") { store.dismiss(call) }
                     }
+                    Spacer(minLength: 4)
+                    trailing
                 }
             }.padding(.horizontal, 12).padding(.vertical, 10)
         }
@@ -79,7 +83,10 @@ struct InboxRow: View {
         case .cancelled: Text("Cancelled").font(.callout).foregroundColor(T.muted)
         default:
             let left = store.remaining(call)
-            Text((left < 300 ? "▲ " : "") + clock(left)).font(.callout.monospacedDigit())
+            HStack(spacing: 4) {
+                Image(systemName: left < 300 ? "exclamationmark.triangle.fill" : "clock").font(.caption)
+                Text(clock(left)).font(.callout.monospacedDigit())
+            }
         }
     }
 }

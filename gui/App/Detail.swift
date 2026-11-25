@@ -3,20 +3,13 @@ import SwiftUI
 struct DetailView: View {
     @ObservedObject var store: Store
     @ObservedObject var call: CallModel
+    @ObservedObject var layout = LayoutState.shared
+
+    var inQuestion: Bool { call.tab < call.q.count }
 
     var body: some View {
         ZStack {
-            VStack(spacing: 0) {
-                header
-                Divider()
-                tabs
-                Divider()
-                if !call.live { banner }
-                content
-                Divider()
-                footer
-            }
-            if call.sendBackOpen { SendBackSheet(store: store, call: call) }
+            if layout.zoomed && inQuestion { zoomBody } else { normalBody }
             if let big = call.bigImage, let img = NSImage(contentsOfFile: big) {
                 ZStack {
                     Color.black.opacity(0.5).onTapGesture { call.bigImage = nil }
@@ -33,14 +26,69 @@ struct DetailView: View {
         }
     }
 
+    var normalBody: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            tabs
+            Divider()
+            if !call.live { banner }
+            content
+            Divider()
+            footer
+        }
+    }
+
+    /// Mock 7: a narrow question column on the left, the chat taking the rest.
+    var zoomBody: some View {
+        HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                HStack {
+                    Text("Question \(call.tab + 1) of \(call.q.count)").foregroundColor(T.muted)
+                    Spacer()
+                    if call.live { OutlineButton(title: "Send back…", icon: "arrow.uturn.left") { openSendBack() } }
+                }.padding(.horizontal, 16).padding(.vertical, 12)
+                Divider()
+                dots
+                Divider()
+                if !call.live { banner }
+                QuestionView(call: call, i: call.tab, compact: true).disabled(!call.live)
+                Divider()
+                footer
+            }.frame(width: 340)
+            Divider()
+            ChatPane(call: call, i: call.tab, zoomed: true).id(call.tab)
+        }
+    }
+
+    var dots: some View {
+        HStack(spacing: 8) {
+            ForEach(0..<call.q.count, id: \.self) { i in
+                Button { call.tab = i } label: {
+                    Image(systemName: call.answered(i) ? "checkmark.circle.fill" : (call.tab == i ? "circle.inset.filled" : "circle"))
+                        .foregroundColor(call.tab == i ? T.ink : T.muted)
+                }.buttonStyle(.plain).help(call.header(i))
+            }
+            Button { call.tab = call.q.count } label: { Text("Review").font(.callout) }.buttonStyle(.plain).foregroundColor(T.muted)
+            Spacer()
+        }.padding(.horizontal, 16).padding(.vertical, 10)
+    }
+
     var header: some View {
         HStack {
             Text(call.sessionName).font(.headline)
-            Text("· \(call.request.branch) · \(call.shortId)").foregroundColor(T.muted)
+            HStack(spacing: 4) {
+                Text("·")
+                if !call.request.branch.isEmpty { Image(systemName: "arrow.triangle.branch"); Text(call.request.branch); Text("·") }
+                Text(call.shortId)
+            }.foregroundColor(T.muted)
             Spacer()
             if call.live {
-                Text("\(max(1, Int(store.remaining(call) / 60))) min left").foregroundColor(T.muted)
-                OutlineButton(title: "Send back…") { openSendBack() }
+                HStack(spacing: 5) {
+                    Image(systemName: "clock")
+                    Text("\(max(1, Int(store.remaining(call) / 60))) min left")
+                }.foregroundColor(T.muted)
+                OutlineButton(title: "Send back…", icon: "arrow.uturn.left") { openSendBack() }
             }
         }.padding(.horizontal, 20).padding(.vertical, 14)
     }
@@ -70,15 +118,8 @@ struct DetailView: View {
     }
 
     @ViewBuilder var content: some View {
-        if call.tab < call.q.count {
-            GeometryReader { geo in
-                HStack(spacing: 0) {
-                    QuestionView(call: call, i: call.tab).disabled(!call.live)
-                        .frame(width: max(320, geo.size.width * 0.56))
-                    Divider()
-                    ChatPane(call: call, i: call.tab).id(call.tab)
-                }
-            }
+        if inQuestion {
+            SplitPane(call: call, i: call.tab)
         } else {
             ReviewView(call: call).disabled(!call.live)
         }
@@ -87,7 +128,8 @@ struct DetailView: View {
     var footer: some View {
         HStack {
             if call.tab == call.q.count && call.skippedCount > 0 {
-                Text("⚠ \(call.skippedCount) question\(call.skippedCount == 1 ? "" : "s") skipped. You can still send.").foregroundColor(T.muted)
+                Label("\(call.skippedCount) question\(call.skippedCount == 1 ? "" : "s") skipped. You can still send.", systemImage: "exclamationmark.triangle")
+                    .foregroundColor(T.muted)
             } else {
                 Text("\(call.answeredCount) of \(call.q.count) answered").foregroundColor(T.muted)
             }
@@ -95,12 +137,44 @@ struct DetailView: View {
             if call.tab < call.q.count {
                 PrimaryButton(title: call.tab + 1 < call.q.count ? "Next →" : "Review →") { call.tab += 1 }
             } else {
-                OutlineButton(title: "← Back") { call.tab = call.q.count - 1 }
+                OutlineButton(title: "Back", icon: "arrow.uturn.left") { call.tab = call.q.count - 1 }
                 PrimaryButton(title: call.skippedCount > 0 ? "Send answers (\(call.skippedCount) skipped) →" : "Send answers →", enabled: call.live) {
                     store.respond(call, call.answerResponse())
                 }
             }
         }.padding(.horizontal, 20).padding(.vertical, 14)
+    }
+}
+
+/// Question and chat side by side, with the draggable divider and the collapse strips (mock 8).
+struct SplitPane: View {
+    @ObservedObject var call: CallModel
+    let i: Int
+    @ObservedObject var layout = LayoutState.shared
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            HStack(spacing: 0) {
+                if layout.questionCollapsed {
+                    PaneStrip(icon: call.answered(i) ? "largecircle.fill.circle" : "circle", badge: call.answered(i) ? "◉ \(call.answeredCount)" : nil,
+                              caption: "Q\(i + 1)") { layout.questionCollapsed = false }
+                    Divider()
+                    ChatPane(call: call, i: i, zoomed: false).id(i)
+                } else if layout.chatCollapsed {
+                    QuestionView(call: call, i: i, compact: false).disabled(!call.live)
+                    Divider()
+                    PaneStrip(icon: "bubble.left", badge: call.unread > 0 ? "\(call.unread) new" : nil, caption: nil) {
+                        layout.chatCollapsed = false; call.unread = 0
+                    }
+                } else {
+                    let q = min(max(w * CGFloat(layout.ratio), LayoutState.questionMin), w - LayoutState.chatMin)
+                    QuestionView(call: call, i: i, compact: q < 420).disabled(!call.live).frame(width: q)
+                    SplitHandle(total: w)
+                    ChatPane(call: call, i: i, zoomed: false).id(i)
+                }
+            }.coordinateSpace(name: "split")
+        }
     }
 }
 
@@ -129,32 +203,60 @@ struct TabButton: View {
 struct QuestionView: View {
     @ObservedObject var call: CallModel
     let i: Int
+    var compact = false
 
     var question: Question { call.request.questions[i] }
     var multi: Bool { question.multiSelect ?? false }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    Text("Question \(i + 1) of \(call.q.count)").foregroundColor(T.muted)
-                    Spacer()
-                    LinkButton(title: "Clear answer") { call.clear(i) }
-                    Chip(text: multi ? "Choose any · \(call.q[i].picked.count) selected" : "Choose one")
-                }
-                let parts = question.question.split(separator: "\n", maxSplits: 1).map(String.init)
-                Text(parts.first ?? "").font(.title3.bold()).fixedSize(horizontal: false, vertical: true)
-                if parts.count > 1 {
-                    Text(parts[1].trimmingCharacters(in: .whitespacesAndNewlines)).foregroundColor(T.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                ForEach(0..<question.options.count, id: \.self) { oi in
-                    OptionCard(call: call, i: i, oi: oi)
-                }
-                OtherCard(call: call, i: i)
-                NoteBox(call: call, i: i)
-            }.padding(20)
+        GeometryReader { geo in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack {
+                        if !compact { Text("Question \(i + 1) of \(call.q.count)").foregroundColor(T.muted) }
+                        Spacer()
+                        LinkButton(title: "Clear answer") { call.clear(i) }
+                        HStack(spacing: 5) {
+                            Image(systemName: multi ? "checkmark.square" : "circle").font(.caption)
+                            Text(multi ? "Choose any · \(call.q[i].picked.count) selected" : "Choose one").font(.caption)
+                        }
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(T.border))
+                    }
+                    let parts = question.question.split(separator: "\n", maxSplits: 1).map(String.init)
+                    Text(parts.first ?? "").font(.title3.bold()).fixedSize(horizontal: false, vertical: true)
+                    if parts.count > 1 {
+                        Text(parts[1].trimmingCharacters(in: .whitespacesAndNewlines)).foregroundColor(T.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    ForEach(0..<question.options.count, id: \.self) { oi in
+                        OptionCard(call: call, i: i, oi: oi, compact: compact, maxPreview: geo.size.height * 0.4)
+                    }
+                    OtherCard(call: call, i: i)
+                    NoteBox(call: call, i: i)
+                }.padding(20)
+            }
         }
+        .focusable()
+        .focusEffectDisabled()
+        .onKeyPress(.downArrow) { move(1); return .handled }
+        .onKeyPress(.upArrow) { move(-1); return .handled }
+        .onKeyPress(.space) { toggleFocused() }
+    }
+
+    /// Single choice: arrows select and open the preview. Several: arrows move the focus, space ticks it (mock 3).
+    func move(_ d: Int) {
+        let n = question.options.count + 1
+        let cur = multi ? (call.q[i].previewOpen ?? -1) : (call.q[i].picked.first ?? -1)
+        let next = min(max(cur + d, 0), n - 1)
+        if multi { call.q[i].previewOpen = next < question.options.count && question.options[next].preview != nil ? next : nil; call.kbFocus[i] = next }
+        else { call.select(i, next); call.kbFocus[i] = next }
+    }
+
+    func toggleFocused() -> KeyPress.Result {
+        guard multi, let f = call.kbFocus[i] else { return .ignored }
+        call.select(i, f)
+        return .handled
     }
 }
 
@@ -178,6 +280,8 @@ struct OptionCard: View {
     @ObservedObject var call: CallModel
     let i: Int
     let oi: Int
+    var compact = false
+    var maxPreview: CGFloat = 280
 
     var body: some View {
         let o = call.request.questions[i].options[oi]
@@ -189,16 +293,16 @@ struct OptionCard: View {
             HStack(alignment: .top, spacing: 10) {
                 Button { call.select(i, oi) } label: { Marker(on: on, multi: multi) }.buttonStyle(.plain)
                 VStack(alignment: .leading, spacing: 3) {
-                    HStack {
-                        Text(label).fontWeight(.semibold)
-                        if recommended { Chip(text: "Recommended") }
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(label).fontWeight(.semibold).fixedSize(horizontal: false, vertical: true)
+                        if recommended { Chip(text: "Recommended").fixedSize() }
                     }
                     if let d = o.description, !d.isEmpty { Text(d).font(.callout).foregroundColor(T.muted) }
                 }
                 Spacer()
                 if o.preview != nil {
                     Button { call.q[i].previewOpen = open ? nil : oi } label: {
-                        HStack(spacing: 4) { Image(systemName: "eye"); Text("Preview"); Image(systemName: open ? "chevron.up" : "chevron.down") }
+                        HStack(spacing: 4) { Image(systemName: "eye"); if !compact { Text("Preview") }; Image(systemName: open ? "chevron.up" : "chevron.down") }
                             .font(.callout).padding(.horizontal, 8).padding(.vertical, 4)
                             .overlay(RoundedRectangle(cornerRadius: 6).stroke(T.border))
                     }.buttonStyle(.plain)
@@ -207,7 +311,7 @@ struct OptionCard: View {
             if open, let p = o.preview {
                 Divider()
                 ScrollView { MarkdownView(text: p).padding(12) }
-                    .frame(maxHeight: 280)
+                    .frame(maxHeight: max(120, maxPreview))
             }
         }
         .background(RoundedRectangle(cornerRadius: 10).fill(on ? T.faint : Color.clear))
@@ -233,7 +337,10 @@ struct OtherCard: View {
                 Text("Something else…").fontWeight(.semibold)
                 Spacer()
             }
-            if on { AttachArea(call: call, key: "q\(i).other", text: $call.q[i].other, placeholder: "Your own answer · paste an image with ⌘V", minHeight: 70) }
+            if on {
+                AttachArea(call: call, key: "q\(i).other", text: $call.q[i].other, placeholder: "Your own answer", minHeight: 70)
+                Text("Paste an image with ⌘V. Click a thumbnail to enlarge.").font(.caption).foregroundColor(T.muted)
+            }
         }
         .padding(12)
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(on ? T.ink : T.border, lineWidth: on ? 2 : 1))

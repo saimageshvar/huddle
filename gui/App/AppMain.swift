@@ -1,11 +1,13 @@
 import SwiftUI
 import AppKit
+import Combine
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let store = Store()
     var window: NSWindow!
     var server: SocketServer!
     var status: NSStatusItem!
+    var bag = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ n: Notification) {
         signal(SIGPIPE, SIG_IGN)
@@ -29,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.window.orderFrontRegardless()
         }
         store.onEmpty = { [weak self] in self?.window.orderOut(nil) }
+        LayoutState.shared.$zoomed.sink { [weak self] z in self?.window.title = z ? "Huddle · chat zoomed" : "Huddle" }.store(in: &bag)
         refreshStatus()
         installEditMenu()
         pruneCalls()
@@ -66,24 +69,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        openWindow()
+        return true
+    }
+
     func windowShouldClose(_ sender: NSWindow) -> Bool { sender.orderOut(nil); return false }
 
     func applicationWillTerminate(_ n: Notification) { store.quitAll(); unlink(socketPath) }
 
+    /// The menu bar mark from mock 12: the letter H and the waiting count inside a rounded outline.
+    func statusImage(_ n: Int) -> NSImage {
+        let text = n > 0 ? "H \(n)" : "H"
+        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: NSColor.black]
+        let size = (text as NSString).size(withAttributes: attrs)
+        let img = NSImage(size: NSSize(width: ceil(size.width) + 14, height: 18), flipped: false) { r in
+            let path = NSBezierPath(roundedRect: r.insetBy(dx: 1, dy: 1.5), xRadius: 5, yRadius: 5)
+            path.lineWidth = 1.3
+            NSColor.black.setStroke()
+            path.stroke()
+            (text as NSString).draw(at: NSPoint(x: 7, y: (r.height - size.height) / 2), withAttributes: attrs)
+            return true
+        }
+        img.isTemplate = true
+        return img
+    }
+
+    func rowTitle(_ left: String, _ right: String, bold: Bool = false, dimRight: Bool = true) -> NSAttributedString {
+        let para = NSMutableParagraphStyle()
+        para.tabStops = [NSTextTab(textAlignment: .right, location: 270)]
+        let s = NSMutableAttributedString(string: left, attributes: [.font: NSFont.systemFont(ofSize: 13, weight: bold ? .semibold : .regular), .paragraphStyle: para])
+        s.append(NSAttributedString(string: "\t" + right, attributes: [.font: NSFont.systemFont(ofSize: 13),
+                                                                       .foregroundColor: dimRight ? NSColor.secondaryLabelColor : NSColor.labelColor, .paragraphStyle: para]))
+        return s
+    }
+
     func refreshStatus() {
-        status.button?.title = store.waiting > 0 ? "H \(store.waiting)" : "H"
+        status.button?.image = statusImage(store.waiting)
+        status.button?.title = ""
         let menu = NSMenu()
-        let head = NSMenuItem(title: store.waiting == 0 ? "Nothing waiting" : "\(store.waiting) waiting", action: nil, keyEquivalent: "")
+        let head = NSMenuItem()
+        head.attributedTitle = rowTitle(store.waiting == 0 ? "Nothing waiting" : "\(store.waiting) waiting", "chime on arrival", bold: true)
         head.isEnabled = false
         menu.addItem(head)
         for c in store.calls {
+            let left = store.remaining(c)
             let t: String
             switch c.state {
             case .expired: t = "Expired"
             case .cancelled: t = "Cancelled"
-            default: t = clock(store.remaining(c))
+            default: t = (left < 300 ? "▲ " : "") + clock(left)
             }
-            let item = NSMenuItem(title: "\(c.sessionName)   \(t)", action: #selector(pick(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: c.sessionName, action: #selector(pick(_:)), keyEquivalent: "")
+            item.attributedTitle = rowTitle(c.sessionName, t, dimRight: false)
             item.target = self
             item.representedObject = c.id
             menu.addItem(item)
@@ -92,7 +130,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let open = NSMenuItem(title: "Open Huddle", action: #selector(openWindow), keyEquivalent: "")
         open.target = self
         menu.addItem(open)
-        let quit = NSMenuItem(title: "Quit (calls fall back to the agent)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quit = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        quit.attributedTitle = rowTitle("Quit", "calls fall back to the agent")
         menu.addItem(quit)
         status.menu = menu
     }

@@ -33,10 +33,11 @@ struct PrimaryButton: View {
 
 struct OutlineButton: View {
     let title: String
+    var icon: String? = nil
     let action: () -> Void
     var body: some View {
         Button(action: action) {
-            Text(title).padding(.horizontal, 12).padding(.vertical, 7)
+            HStack(spacing: 6) { if let i = icon { Image(systemName: i) }; Text(title) }.padding(.horizontal, 12).padding(.vertical, 7)
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(T.border))
         }.buttonStyle(.plain)
     }
@@ -60,12 +61,17 @@ struct Attachment: Identifiable {
 final class PlaceholderTextView: NSTextView {
     var placeholder = ""
     var onPasteImage: ((Data) -> Void)?
+    var onPasteLongText: ((String) -> Void)?
 
     /// An image on the pasteboard becomes an attachment; anything with text in it pastes as text.
     override func paste(_ sender: Any?) {
         let pb = NSPasteboard.general
         if onPasteImage != nil, pb.string(forType: .string) == nil, let data = Self.pngData(pb) {
             onPasteImage?(data)
+            return
+        }
+        if let cb = onPasteLongText, let t = pb.string(forType: .string), t.count >= 600 || t.split(separator: "\n").count >= 8 {
+            cb(t)
             return
         }
         super.paste(sender)
@@ -97,6 +103,7 @@ struct TextArea: NSViewRepresentable {
     var submitOnEnter = false
     var onSubmit: (() -> Void)? = nil
     var onPasteImage: ((Data) -> Void)? = nil
+    var onPasteLongText: ((String) -> Void)? = nil
     static let inset = NSSize(width: 10, height: 9)
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -117,6 +124,7 @@ struct TextArea: NSViewRepresentable {
         tv.autoresizingMask = [.width]
         tv.placeholder = placeholder
         tv.onPasteImage = onPasteImage
+        tv.onPasteLongText = onPasteLongText
         tv.string = text
         let sv = NSScrollView()
         sv.drawsBackground = false
@@ -132,6 +140,7 @@ struct TextArea: NSViewRepresentable {
         if tv.string != text { tv.string = text }
         tv.placeholder = placeholder
         tv.onPasteImage = onPasteImage
+        tv.onPasteLongText = onPasteLongText
         tv.needsDisplay = true
     }
 
@@ -182,11 +191,13 @@ struct AttachArea: View {
     @Binding var text: String
     var placeholder = ""
     var minHeight: CGFloat = 60
+    var maxHeight: CGFloat = 160
     var submitOnEnter = false
     var onSubmit: (() -> Void)? = nil
 
     var body: some View {
         let imgs = call.attachments[key] ?? []
+        let pastes = call.pastes[key] ?? []
         VStack(alignment: .leading, spacing: 0) {
             if !imgs.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -206,8 +217,14 @@ struct AttachArea: View {
                     }.padding(.horizontal, 10).padding(.top, 12).padding(.bottom, 2)
                 }
             }
-            TextArea(text: $text, placeholder: placeholder, minHeight: minHeight, submitOnEnter: submitOnEnter, onSubmit: onSubmit,
-                     onPasteImage: { call.addImage($0, key) })
+            if !pastes.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(pastes) { p in PasteChip(paste: p, onRemove: { call.pastes[key]?.removeAll { $0.id == p.id } }, open: Flag()) }
+                }.padding(.horizontal, 10).padding(.top, 10)
+            }
+            TextArea(text: $text, placeholder: placeholder, minHeight: minHeight, maxHeight: maxHeight, submitOnEnter: submitOnEnter, onSubmit: onSubmit,
+                     onPasteImage: { call.addImage($0, key) },
+                     onPasteLongText: key.hasSuffix(".chat") ? { call.pastes[key, default: []].append(PastedText(text: $0)) } : nil)
         }
         .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(T.border))

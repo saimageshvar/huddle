@@ -18,6 +18,14 @@ struct QState {
     var noteBackup: String? = nil
 }
 
+struct PastedText: Identifiable {
+    let id = UUID()
+    let text: String
+    var lines: Int { text.split(separator: "\n", omittingEmptySubsequences: false).count }
+    var bytes: Int { text.utf8.count }
+    var label: String { "Pasted · \(lines) lines · " + (bytes >= 1024 ? String(format: "%.1f KB", Double(bytes) / 1024) : "\(bytes) B") }
+}
+
 struct ChatMsg: Identifiable {
     let id = UUID()
     let mine: Bool
@@ -27,6 +35,7 @@ struct ChatMsg: Identifiable {
     var failed = false
     var tool: String? = nil
     var images: [String] = []
+    var pasted: [PastedText] = []
 }
 
 enum CallState { case pending, answered, expired, cancelled }
@@ -50,6 +59,9 @@ final class CallModel: ObservableObject, Identifiable {
         }
     }
     @Published var attachments: [String: [Attachment]] = [:]
+    @Published var pastes: [String: [PastedText]] = [:]
+    @Published var unread = 0
+    var kbFocus: [Int: Int] = [:]
     @Published var bigImage: String?
     private var dirPath: String?
     private var agent: SideAgent?
@@ -124,15 +136,20 @@ final class CallModel: ObservableObject, Identifiable {
 
     func sendChat(_ qi: Int, _ text: String) {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard live, !t.isEmpty || !(attachments["q\(qi).chat"] ?? []).isEmpty else { return }
-        let paths = imagePaths("q\(qi).chat")
+        let key = "q\(qi).chat"
+        let pasted = pastes[key] ?? []
+        guard live, !t.isEmpty || !(attachments[key] ?? []).isEmpty || !pasted.isEmpty else { return }
+        let paths = imagePaths(key)
         var m = ChatMsg(mine: true, text: t)
         m.images = paths
+        m.pasted = pasted
+        pastes[key] = nil
+        let body = ([t] + pasted.map { "[pasted text]\n" + $0.text }).filter { !$0.isEmpty }.joined(separator: "\n\n")
         threads[qi].append(m)
         threads[qi].append(ChatMsg(mine: false, text: "", live: true))
         q[qi].input = ""
         attachments["q\(qi).chat"] = nil
-        if !ask(qi, "chat", "[Q\(qi + 1): \(header(qi))] \(t)", images: paths) { fail(qi, "chat", "Could not start the assistant. Is the claude command installed?") }
+        if !ask(qi, "chat", "[Q\(qi + 1): \(header(qi))] \(body)", images: paths) { fail(qi, "chat", "Could not start the assistant. Is the claude command installed?") }
     }
 
     func draftNote(_ qi: Int) {
@@ -181,6 +198,7 @@ final class CallModel: ObservableObject, Identifiable {
             if var last = threads[qi].last, last.live { last.tool = text; threads[qi][threads[qi].count - 1] = last }
         case ("chat", .done):
             if var last = threads[qi].last, last.live { last.live = false; last.tool = nil; threads[qi][threads[qi].count - 1] = last }
+            if LayoutState.shared.chatCollapsed { unread += 1 }
             reqs[r] = nil
         case (_, .delta):
             buffers[r, default: ""] += text
@@ -214,6 +232,24 @@ final class CallModel: ObservableObject, Identifiable {
     }
 
     func stopAgent() { agent?.stop(); agent = nil }
+
+    /// Stops the answer being written; the next message restarts the agent on the same conversation.
+    func stopChat() {
+        guard let a = agent else { return }
+        sessionId = a.sessionId
+        a.stop()
+        agent = nil
+        reqs = [:]
+        buffers = [:]
+        for k in threads.indices {
+            if var last = threads[k].last, last.live {
+                last.live = false
+                last.text += last.text.isEmpty ? "(stopped)" : "\n\n(stopped)"
+                threads[k][threads[k].count - 1] = last
+            }
+            q[k].drafting = false
+        }
+    }
 
     var sessionName: String { request.title.isEmpty ? URL(fileURLWithPath: request.cwd).lastPathComponent : request.title }
     var repo: String { URL(fileURLWithPath: request.cwd).lastPathComponent }
