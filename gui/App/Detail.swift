@@ -307,8 +307,10 @@ struct OptionCard: View {
             }.padding(12)
             if open, let p = o.preview {
                 Divider()
-                ScrollView { MarkdownView(text: p).padding(12) }
-                    .frame(maxHeight: max(120, maxPreview))
+                Group {
+                    if MD.isMockup(p) { VerbatimBlock(text: p).padding(12) }
+                    else { ScrollView { MarkdownView(text: p).padding(12) } }
+                }.frame(maxHeight: max(120, maxPreview))
             }
         }
         .background(RoundedRectangle(cornerRadius: 10).fill(on ? T.faint : Color.clear))

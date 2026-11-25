@@ -11,6 +11,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ n: Notification) {
         signal(SIGPIPE, SIG_IGN)
+        switch ProcessInfo.processInfo.environment["HUDDLE_APPEARANCE"] {
+        case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
+        case "light": NSApp.appearance = NSAppearance(named: .aqua)
+        default: break
+        }
         DispatchQueue.global().async { SideAgent.reapStale() }
         server = SocketServer(store: store)
         guard server.start() else { NSApp.terminate(nil); return }

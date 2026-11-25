@@ -21,6 +21,24 @@ enum MDBlock: Identifiable {
 }
 
 enum MD {
+    /// A preview with no Markdown markup that is clearly a mockup or a diff keeps its exact spacing in a monospace box.
+    static func isMockup(_ text: String) -> Bool {
+        if text.contains("```") { return false }
+        let lines = text.components(separatedBy: "\n")
+        let markdown = lines.contains { l in
+            let t = l.trimmingCharacters(in: .whitespaces)
+            return t.hasPrefix("# ") || t.hasPrefix("## ") || t.hasPrefix("### ") || t.hasPrefix("- ") || t.hasPrefix("* ")
+                || (t.first?.isNumber == true && t.contains(". ")) || t.contains("**") || t.contains("`")
+        }
+        if markdown { return false }
+        let box = CharacterSet(charactersIn: "─│┌┐└┘├┤┬┴┼═║╔╗╚╝▀▄█▌▐░▒▓")
+        if text.unicodeScalars.contains(where: { box.contains($0) }) { return true }
+        if lines.contains(where: { $0.hasPrefix("@@") || $0.hasPrefix("+++ ") || $0.hasPrefix("--- ") }) { return true }
+        if lines.contains(where: { $0.hasPrefix("+--") || $0.hasPrefix("|--") }) { return true }
+        let indented = lines.filter { $0.hasPrefix("  ") || $0.hasPrefix("\t") }.count
+        return lines.count >= 3 && indented * 2 >= lines.count
+    }
+
     /// Chat replies use single newlines as line breaks; Markdown would fold them into one line.
     static func hardBreaks(_ text: String) -> String {
         let lines = text.components(separatedBy: "\n")
@@ -201,5 +219,17 @@ struct TableBlock: View {
             .padding(.horizontal, 10).padding(.vertical, 6)
             .frame(maxWidth: .infinity, alignment: .leading)
             .overlay(Rectangle().stroke(T.border, lineWidth: 0.5))
+    }
+}
+
+/// Mockups and diffs: shown verbatim so the alignment survives.
+struct VerbatimBlock: View {
+    let text: String
+    var body: some View {
+        ScrollView([.horizontal, .vertical]) {
+            Text(text).font(.system(.callout, design: .monospaced)).fixedSize().textSelection(.enabled)
+                .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.07)))
     }
 }
