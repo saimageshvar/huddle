@@ -50,21 +50,98 @@ struct LinkButton: View {
     }
 }
 
-struct TextArea: View {
+/// NSTextView draws the placeholder at the same inset as the text and cursor, so they cannot drift apart.
+final class PlaceholderTextView: NSTextView {
+    var placeholder = ""
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard string.isEmpty else { return }
+        let x = textContainerInset.width + (textContainer?.lineFragmentPadding ?? 0)
+        let rect = NSRect(x: x, y: textContainerInset.height, width: max(1, bounds.width - x - textContainerInset.width), height: bounds.height)
+        (placeholder as NSString).draw(with: rect, options: [.usesLineFragmentOrigin], attributes: [.font: font ?? NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.placeholderTextColor])
+    }
+    override func didChangeText() { super.didChangeText(); needsDisplay = true }
+}
+
+struct TextArea: NSViewRepresentable {
     @Binding var text: String
     var placeholder = ""
     var minHeight: CGFloat = 60
-    var body: some View {
-        ZStack(alignment: .topLeading) {
-            TextEditor(text: $text)
-                .font(.body).scrollContentBackground(.hidden)
-                .frame(minHeight: minHeight, maxHeight: 180)
-                .padding(4)
-            if text.isEmpty {
-                Text(placeholder).foregroundColor(T.muted).padding(.horizontal, 9).padding(.vertical, 12).allowsHitTesting(false)
-            }
+    var maxHeight: CGFloat = 180
+    var submitOnEnter = false
+    var onSubmit: (() -> Void)? = nil
+    static let inset = NSSize(width: 10, height: 9)
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let tv = PlaceholderTextView()
+        tv.delegate = context.coordinator
+        tv.isRichText = false
+        tv.allowsUndo = true
+        tv.drawsBackground = false
+        tv.font = NSFont.preferredFont(forTextStyle: .body)
+        tv.textColor = .labelColor
+        tv.insertionPointColor = .labelColor
+        tv.textContainerInset = Self.inset
+        tv.textContainer?.lineFragmentPadding = 0
+        tv.textContainer?.widthTracksTextView = true
+        tv.isVerticallyResizable = true
+        tv.autoresizingMask = [.width]
+        tv.placeholder = placeholder
+        tv.string = text
+        let sv = NSScrollView()
+        sv.drawsBackground = false
+        sv.hasVerticalScroller = false
+        sv.borderType = .noBorder
+        sv.documentView = tv
+        return sv
+    }
+
+    func updateNSView(_ sv: NSScrollView, context: Context) {
+        context.coordinator.parent = self
+        guard let tv = sv.documentView as? PlaceholderTextView else { return }
+        if tv.string != text { tv.string = text }
+        tv.placeholder = placeholder
+        tv.needsDisplay = true
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView sv: NSScrollView, context: Context) -> CGSize? {
+        guard let tv = sv.documentView as? NSTextView, let lm = tv.layoutManager, let tc = tv.textContainer else { return nil }
+        let w = proposal.width ?? 300
+        tc.containerSize = NSSize(width: max(1, w - 2 * Self.inset.width), height: .greatestFiniteMagnitude)
+        lm.ensureLayout(for: tc)
+        let used = lm.usedRect(for: tc).height + 2 * Self.inset.height
+        sv.hasVerticalScroller = used > maxHeight
+        return CGSize(width: w, height: min(max(used, minHeight), maxHeight))
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: TextArea
+        init(_ p: TextArea) { parent = p }
+        func textDidChange(_ n: Notification) {
+            guard let tv = n.object as? NSTextView else { return }
+            parent.text = tv.string
         }
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(T.border))
+        func textView(_ tv: NSTextView, doCommandBy sel: Selector) -> Bool {
+            guard sel == #selector(NSResponder.insertNewline(_:)), parent.submitOnEnter,
+                  !(NSApp.currentEvent?.modifierFlags.contains(.shift) ?? false) else { return false }
+            parent.onSubmit?()
+            return true
+        }
+    }
+}
+
+/// Boxed text area: the field plus its border, the look every text box in the app shares.
+struct BoxedTextArea: View {
+    @Binding var text: String
+    var placeholder = ""
+    var minHeight: CGFloat = 60
+    var submitOnEnter = false
+    var onSubmit: (() -> Void)? = nil
+    var body: some View {
+        TextArea(text: $text, placeholder: placeholder, minHeight: minHeight, submitOnEnter: submitOnEnter, onSubmit: onSubmit)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(T.border))
     }
 }

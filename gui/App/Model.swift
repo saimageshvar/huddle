@@ -10,6 +10,22 @@ struct QState {
     var previewOpen: Int? = nil
     var flagged = false
     var reason = ""
+    var input = ""
+    var drafting = false
+    var draftedAt = -1
+    var noteEdited = false
+    var drafted = false
+    var noteBackup: String? = nil
+}
+
+struct ChatMsg: Identifiable {
+    let id = UUID()
+    let mine: Bool
+    var text: String
+    let time = Date()
+    var live = false
+    var failed = false
+    var tool: String? = nil
 }
 
 enum CallState { case pending, answered, expired, cancelled }
@@ -25,13 +41,136 @@ final class CallModel: ObservableObject, Identifiable {
     @Published var tab = 0
     @Published var reviewEditing = Set<Int>()
     @Published var sendBackOpen = false
+    @Published var threads: [[ChatMsg]]
+    @Published var flash: String? {
+        didSet {
+            guard let f = flash else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in if self?.flash == f { self?.flash = nil } }
+        }
+    }
+    @Published var restartNeeded = false
+    private var agent: SideAgent?
+    private var sessionId = ""
+    private var nextReq = 0
+    private var reqs: [Int: (q: Int, kind: String)] = [:]
+    private var buffers: [Int: String] = [:]
 
     init(request: Request, fd: Int32) {
         self.request = request
         self.fd = fd
         deadline = Date(timeIntervalSince1970: TimeInterval(request.deadline))
         q = Array(repeating: QState(), count: request.questions.count)
+        threads = Array(repeating: [], count: request.questions.count)
     }
+
+    // MARK: side agent
+
+    private func ask(_ qi: Int, _ kind: String, _ text: String) -> Bool {
+        if let a = agent, a.model != Prefs.model || a.effort != Prefs.effort {
+            sessionId = a.sessionId
+            a.stop()
+            agent = nil
+        }
+        if agent == nil {
+            agent = SideAgent(request: request, model: Prefs.model, effort: Prefs.effort, resume: sessionId)
+            agent?.onEvent = { [weak self] r, k, t in self?.handle(r, k, t) }
+        }
+        guard let a = agent else { return false }
+        let id = nextReq
+        nextReq += 1
+        reqs[id] = (qi, kind)
+        a.send(id, text)
+        return true
+    }
+
+    func sendChat(_ qi: Int, _ text: String) {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard live, !t.isEmpty else { return }
+        threads[qi].append(ChatMsg(mine: true, text: t))
+        threads[qi].append(ChatMsg(mine: false, text: "", live: true))
+        q[qi].input = ""
+        if !ask(qi, "chat", "[Q\(qi + 1): \(header(qi))] \(t)") { fail(qi, "chat", "Could not start the assistant. Is the claude command installed?") }
+    }
+
+    func draftNote(_ qi: Int) {
+        guard live, !q[qi].drafting, !threads[qi].isEmpty, threads[qi].last?.live != true else { return }
+        q[qi].drafting = true
+        q[qi].draftedAt = threads[qi].count
+        let ans = answerText(qi)
+        if !ask(qi, "note", "[DRAFT NOTE Q\(qi + 1): \(header(qi))] (user's current answer: \(ans.isEmpty ? "none yet" : ans)) Write the note.") {
+            fail(qi, "note", "Could not start the assistant.")
+        }
+    }
+
+    func draftReason(_ qi: Int) {
+        guard live, !q[qi].drafting, !threads[qi].isEmpty else { return }
+        q[qi].drafting = true
+        if !ask(qi, "reason", "[DRAFT REASON Q\(qi + 1): \(header(qi))] Write why question \(qi + 1) should be asked differently.") {
+            fail(qi, "reason", "Could not start the assistant.")
+        }
+    }
+
+    func undoDraft(_ qi: Int) {
+        guard let old = q[qi].noteBackup else { return }
+        q[qi].note = old
+        q[qi].noteBackup = nil
+        q[qi].drafted = false
+    }
+
+    func noteTyped(_ qi: Int) { q[qi].noteEdited = true; q[qi].drafted = false }
+
+    private func fail(_ qi: Int, _ kind: String, _ text: String) {
+        if kind == "chat", var last = threads[qi].last, last.live {
+            last.text = text; last.live = false; last.failed = true
+            threads[qi][threads[qi].count - 1] = last
+        } else {
+            flash = text
+        }
+        q[qi].drafting = false
+    }
+
+    private func handle(_ r: Int, _ kind: SideAgent.Kind, _ text: String) {
+        guard let (qi, rk) = reqs[r] else { return }
+        switch (rk, kind) {
+        case ("chat", .delta):
+            if var last = threads[qi].last, last.live { last.text += text; last.tool = nil; threads[qi][threads[qi].count - 1] = last }
+        case ("chat", .tool):
+            if var last = threads[qi].last, last.live { last.tool = text; threads[qi][threads[qi].count - 1] = last }
+        case ("chat", .done):
+            if var last = threads[qi].last, last.live { last.live = false; last.tool = nil; threads[qi][threads[qi].count - 1] = last }
+            reqs[r] = nil
+        case (_, .delta):
+            buffers[r, default: ""] += text
+        case ("note", .done), ("reason", .done):
+            finishDraft(r, qi, rk)
+        case (_, .error):
+            fail(qi, rk, text)
+            reqs[r] = nil
+        default: break
+        }
+    }
+
+    private func finishDraft(_ r: Int, _ qi: Int, _ kind: String) {
+        let out = (buffers[r] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        buffers[r] = nil
+        reqs[r] = nil
+        q[qi].drafting = false
+        let lastLine = out.split(separator: "\n").last.map(String.init) ?? ""
+        if out.isEmpty || lastLine.trimmingCharacters(in: CharacterSet(charactersIn: "`.*_ ")) == "NONE" {
+            flash = kind == "note" ? "Nothing to pass on from this discussion yet." : "Nothing in the discussion says what is wrong with the question."
+            return
+        }
+        if kind == "note" {
+            q[qi].noteBackup = q[qi].note
+            q[qi].note = out
+            q[qi].noteEdited = false
+            q[qi].drafted = true
+        } else {
+            q[qi].reason = out
+        }
+    }
+
+    func stopAgent() { agent?.stop(); agent = nil }
 
     var sessionName: String { request.title.isEmpty ? URL(fileURLWithPath: request.cwd).lastPathComponent : request.title }
     var repo: String { URL(fileURLWithPath: request.cwd).lastPathComponent }
@@ -128,6 +267,7 @@ final class Store: ObservableObject {
         _ = writeAll(c.fd, data)
         shutdown(c.fd, SHUT_RDWR)
         c.state = .answered
+        c.stopAgent()
         remove(c)
     }
 
@@ -144,16 +284,17 @@ final class Store: ObservableObject {
     func cancel(fd: Int32) {
         guard let c = calls.first(where: { $0.fd == fd }), c.live else { return }
         c.state = .cancelled
+        c.stopAgent()
         onChange?()
     }
 
     func quitAll() {
-        for c in calls where c.live { shutdown(c.fd, SHUT_RDWR) }
+        for c in calls { c.stopAgent(); if c.live { shutdown(c.fd, SHUT_RDWR) } }
     }
 
     private func tick() {
         now = Date()
-        for c in calls where c.live && now >= c.deadline { c.state = .expired }
+        for c in calls where c.live && now >= c.deadline { c.state = .expired; c.stopAgent() }
         onChange?()
     }
 

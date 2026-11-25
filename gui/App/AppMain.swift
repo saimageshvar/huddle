@@ -9,13 +9,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ n: Notification) {
         signal(SIGPIPE, SIG_IGN)
+        DispatchQueue.global().async { SideAgent.reapStale() }
         server = SocketServer(store: store)
         guard server.start() else { NSApp.terminate(nil); return }
 
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 760),
                           styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         window.title = "Huddle"
-        window.minSize = NSSize(width: 760, height: 520)
+        window.minSize = NSSize(width: 1000, height: 560)
         window.delegate = self
         window.isReleasedWhenClosed = false
         window.contentView = NSHostingView(rootView: RootView(store: store))

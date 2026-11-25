@@ -55,9 +55,12 @@ struct ReviewRow: View {
                 }
             }
             if editing || !call.q[i].note.isEmpty {
-                NoteBox(note: $call.q[i].note)
+                NoteBox(call: call, i: i)
             } else {
-                LinkButton(title: "Add note") { call.reviewEditing.insert(i) }
+                HStack(spacing: 12) {
+                    LinkButton(title: "Add note") { call.reviewEditing.insert(i) }
+                    if !call.threads[i].isEmpty { LinkButton(title: "✦ Draft from discussion") { call.draftNote(i) } }
+                }
             }
         }
         .padding(14)
@@ -89,7 +92,9 @@ struct SendBackSheet: View {
                                 }
                             }
                             if call.q[i].flagged {
-                                TextArea(text: $call.q[i].reason, placeholder: "What is wrong with the question?", minHeight: 70)
+                                BoxedTextArea(text: $call.q[i].reason, placeholder: "What is wrong with the question?", minHeight: 70)
+                                if call.q[i].drafting { Text("drafting…").foregroundColor(T.muted) }
+                                else if !call.threads[i].isEmpty { LinkButton(title: "✦ Draft from my discussion") { call.draftReason(i) } }
                             }
                         }
                     }

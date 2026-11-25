@@ -17,6 +17,10 @@ struct DetailView: View {
                 footer
             }
             if call.sendBackOpen { SendBackSheet(store: store, call: call) }
+            if let f = call.flash {
+                VStack { Spacer(); Text(f).padding(.horizontal, 14).padding(.vertical, 8)
+                    .foregroundColor(T.inkText).background(RoundedRectangle(cornerRadius: 8).fill(T.ink)).padding(.bottom, 70) }
+            }
         }
     }
 
@@ -42,9 +46,9 @@ struct DetailView: View {
             ForEach(0..<call.q.count, id: \.self) { i in
                 TabButton(selected: call.tab == i, label: call.header(i),
                           icon: call.answered(i) ? "checkmark.circle" : "circle",
-                          badge: !call.q[i].note.isEmpty) { call.tab = i }
+                          badge: !call.q[i].note.isEmpty, chat: !call.threads[i].isEmpty) { call.tab = i }
             }
-            TabButton(selected: call.tab == call.q.count, label: "Review", icon: nil, badge: false) { call.tab = call.q.count }
+            TabButton(selected: call.tab == call.q.count, label: "Review", icon: nil, badge: false, chat: false) { call.tab = call.q.count }
             Spacer()
         }.padding(.horizontal, 20).padding(.top, 8)
     }
@@ -58,7 +62,14 @@ struct DetailView: View {
 
     @ViewBuilder var content: some View {
         if call.tab < call.q.count {
-            QuestionView(call: call, i: call.tab).disabled(!call.live)
+            GeometryReader { geo in
+                HStack(spacing: 0) {
+                    QuestionView(call: call, i: call.tab).disabled(!call.live)
+                        .frame(width: max(320, geo.size.width * 0.56))
+                    Divider()
+                    ChatPane(call: call, i: call.tab).id(call.tab)
+                }
+            }
         } else {
             ReviewView(call: call).disabled(!call.live)
         }
@@ -89,6 +100,7 @@ struct TabButton: View {
     let label: String
     let icon: String?
     let badge: Bool
+    let chat: Bool
     let action: () -> Void
     var body: some View {
         Button(action: action) {
@@ -96,6 +108,7 @@ struct TabButton: View {
                 if let icon = icon { Image(systemName: icon) }
                 Text(label).fontWeight(selected ? .semibold : .regular)
                 if badge { Image(systemName: "square.and.pencil").font(.caption) }
+                if chat { Image(systemName: "bubble.left").font(.caption) }
             }
             .padding(.horizontal, 14).padding(.vertical, 8)
             .background(selected ? T.faint : Color.clear)
@@ -130,7 +143,7 @@ struct QuestionView: View {
                     OptionCard(call: call, i: i, oi: oi)
                 }
                 OtherCard(call: call, i: i)
-                NoteBox(note: $call.q[i].note)
+                NoteBox(call: call, i: i)
             }.padding(20)
         }
     }
@@ -211,7 +224,7 @@ struct OtherCard: View {
                 Text("Something else…").fontWeight(.semibold)
                 Spacer()
             }
-            if on { TextArea(text: $call.q[i].other, placeholder: "Your own answer", minHeight: 70) }
+            if on { BoxedTextArea(text: $call.q[i].other, placeholder: "Your own answer", minHeight: 70) }
         }
         .padding(12)
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(on ? T.ink : T.border, lineWidth: on ? 2 : 1))
@@ -221,19 +234,43 @@ struct OtherCard: View {
 }
 
 struct NoteBox: View {
-    @Binding var note: String
+    @ObservedObject var call: CallModel
+    let i: Int
     var body: some View {
+        let st = call.q[i]
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: "square.and.pencil")
                 Text("Note for the agent").fontWeight(.semibold)
                 Text("optional").foregroundColor(T.muted)
             }
-            TextArea(text: $note, placeholder: "Anything the agent should know about this answer…", minHeight: 44)
+            BoxedTextArea(text: Binding(get: { call.q[i].note }, set: { call.q[i].note = $0; call.noteTyped(i) }),
+                          placeholder: "Anything the agent should know about this answer…", minHeight: 44)
+            HStack(spacing: 10) {
+                if st.drafting {
+                    ProgressView().controlSize(.small)
+                    Text("drafting…").foregroundColor(T.muted)
+                } else if !call.threads[i].isEmpty {
+                    if st.drafted {
+                        Chip(text: "✦ Drafted from your chat")
+                        if st.noteBackup != nil { LinkButton(title: "Undo") { call.undoDraft(i) } }
+                        LinkButton(title: "Draft again") { draft() }
+                    } else {
+                        LinkButton(title: "✦ Draft from discussion") { draft() }
+                    }
+                }
+                Spacer()
+            }
             Text("The agent reads the note together with the answer, so it can add what a choice cannot say.")
                 .font(.callout).foregroundColor(T.muted)
         }
         .padding(12)
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(T.border))
+    }
+
+    func draft() {
+        if call.q[i].note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !call.q[i].noteEdited || confirmReplaceNote() {
+            call.draftNote(i)
+        }
     }
 }
