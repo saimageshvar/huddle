@@ -6,11 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 )
 
 // agentMsg is one event from the side agent, addressed to the request that caused it.
@@ -45,7 +46,7 @@ func startAgent(req *Request, model, resume string) (*Agent, error) {
 	}
 	cmd := exec.Command("claude", args...)
 	cmd.Dir = req.Cwd
-	cmd.Env = append(os.Environ(), "HUDDLE_SIDE_AGENT=1")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -88,7 +89,7 @@ func (a *Agent) Busy() bool { a.mu.Lock(); defer a.mu.Unlock(); return len(a.que
 func (a *Agent) Stop() {
 	a.stdin.Close()
 	if a.cmd.Process != nil {
-		a.cmd.Process.Kill()
+		syscall.Kill(-a.cmd.Process.Pid, syscall.SIGKILL)
 	}
 }
 
@@ -212,4 +213,19 @@ Two special requests:
 - A message starting [DRAFT NOTE Qn] asks you to write the note that goes to the main agent with the user's answer to question n. Write 1-5 short lines, plain text, no preamble or heading, addressed to the main agent: the user's reasoning, decisions and constraints from your discussion of question n. If the discussion holds nothing worth passing on, reply exactly NONE.
 - A message starting [DRAFT REASON Qn] asks you to write why question n itself is wrong or should be asked differently, from the discussion, addressed to the main agent in 1-5 lines, no preamble.`,
 		req.Cwd, req.TranscriptPath, qs)
+}
+
+// reapStale kills side agents left behind by a huddle pane that died without cleaning up: they are orphaned (parent 1).
+func reapStale() {
+	out, _ := exec.Command("pgrep", "-f", "claude.*--name huddle \\[Hdl\\]").Output()
+	for _, f := range strings.Fields(string(out)) {
+		pid, err := strconv.Atoi(f)
+		if err != nil {
+			continue
+		}
+		if pp, _ := exec.Command("ps", "-o", "ppid=", "-p", f).Output(); strings.TrimSpace(string(pp)) == "1" {
+			syscall.Kill(-pid, syscall.SIGKILL)
+			syscall.Kill(pid, syscall.SIGKILL)
+		}
+	}
 }

@@ -2,7 +2,6 @@
 //
 //	huddle hook        PreToolUse hook: opens a pane beside the asking session, returns the answers
 //	huddle ask <dir>   the pane itself: reads <dir>/request.json, writes <dir>/response.json
-//	huddle history     recently answered questions
 package main
 
 import (
@@ -10,10 +9,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
-	"strings"
-	"text/tabwriter"
-	"time"
+	"syscall"
 
 	tea "charm.land/bubbletea/v2"
 	zone "github.com/lrstanley/bubblezone/v2"
@@ -29,10 +27,8 @@ func main() {
 			fmt.Fprintln(os.Stderr, "huddle:", err)
 			os.Exit(1)
 		}
-	case len(args) == 1 && args[0] == "history":
-		printHistory()
 	default:
-		fmt.Fprintln(os.Stderr, "usage: huddle hook | huddle ask <dir> | huddle history")
+		fmt.Fprintln(os.Stderr, "usage: huddle hook | huddle ask <dir>")
 		os.Exit(2)
 	}
 }
@@ -51,48 +47,17 @@ func runAsk(dir string) error {
 	}
 	_ = exec.Command("afplay", "/System/Library/Sounds/Glass.aiff").Start() // a quiet chime: the pane opens without focus
 	zone.NewGlobal()
+	reapStale()
 	m := newModel(&req, dir)
 	prog = tea.NewProgram(m)
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	go func() {
+		<-hup
+		m.stopAgent()
+		os.Exit(1)
+	}()
 	_, err = prog.Run()
 	m.stopAgent()
 	return err
-}
-
-type historyEntry struct {
-	Time    time.Time `json:"time"`
-	Project string    `json:"project"`
-	Header  string    `json:"header"`
-	Answer  string    `json:"answer"`
-}
-
-func recordHistory(req *Request, resp Response, m *model) {
-	f, err := os.OpenFile(filepath.Join(huddleHome(), "history.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	enc := json.NewEncoder(f)
-	for i := range req.Questions {
-		answer := m.answerText(i)
-		if resp.Kind == "reframe" && m.qs[i].flagged {
-			answer = "sent back with a reason"
-		}
-		_ = enc.Encode(historyEntry{time.Now(), filepath.Base(req.Cwd), m.header(i), answer})
-	}
-}
-
-func printHistory() {
-	b, _ := os.ReadFile(filepath.Join(huddleHome(), "history.jsonl"))
-	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
-	if len(lines) > 30 {
-		lines = lines[len(lines)-30:]
-	}
-	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-	for i := len(lines) - 1; i >= 0; i-- {
-		var e historyEntry
-		if json.Unmarshal([]byte(lines[i]), &e) == nil {
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", e.Project, e.Header, e.Answer, e.Time.Format("Jan 2 15:04"))
-		}
-	}
-	tw.Flush()
 }

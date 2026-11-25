@@ -599,11 +599,10 @@ func (m *model) draftNote(q int) tea.Cmd {
 }
 
 func (m *model) goTo(i int) tea.Cmd {
-	cmd := m.draftNote(m.cur)
 	m.qs[m.cur].visited = true
 	m.cur, m.scr, m.leftOff, m.threadOff = i, scrQuestion, 0, 0
 	m.qs[i].unread = 0
-	return tea.Batch(cmd, m.setFocus(fOptions))
+	return m.setFocus(fOptions)
 }
 
 func (m *model) next() tea.Cmd {
@@ -633,12 +632,8 @@ func (m *model) back() tea.Cmd {
 
 func (m *model) review() tea.Cmd {
 	m.qs[m.cur].visited = true
-	cmds := []tea.Cmd{m.setFocus(fOptions)}
-	for i := range m.qs {
-		cmds = append(cmds, m.draftNote(i))
-	}
 	m.scr, m.editNote = scrReview, -1
-	return tea.Batch(append(cmds, m.spin.Tick)...)
+	return m.setFocus(fOptions)
 }
 
 func (m *model) answered(i int) bool {
@@ -773,7 +768,6 @@ func (m *model) finish(resp Response) tea.Cmd {
 		m.flashAt, m.flash = time.Now(), "Could not save the answer: "+err.Error()
 		return nil
 	}
-	recordHistory(m.req, resp, m)
 	m.stopAgent()
 	return tea.Quit
 }
@@ -894,6 +888,8 @@ func (m *model) action(id string) tea.Cmd {
 		return m.submitInput()
 	case sscan(id, "change-%d", &a):
 		return m.goTo(a)
+	case sscan(id, "draft-%d", &a):
+		return tea.Batch(m.draftNote(a), m.spin.Tick)
 	case sscan(id, "edit-%d", &a):
 		return m.startNote(a)
 	case sscan(id, "copy-%d", &a):
@@ -1606,6 +1602,11 @@ func (m *model) noteRow(w int, cursor, focused bool) string {
 	}
 	if st.note == "" {
 		head := mark("note-row#0", p.muted.Render(icNote)+" "+lipgloss.NewStyle().Foreground(linkColor).Underline(hovered("note-row")).Render("Add a note for the agent")+p.muted.Render("   (/)"))
+		if len(st.thread) > 0 && !st.drafting {
+			head += "   " + link(fmt.Sprintf("draft-%d", m.cur), icBot+" Draft from discussion")
+		} else if st.drafting {
+			head += "   " + p.accent.Render(m.spin.View()) + p.muted.Italic(true).Render(" drafting…")
+		}
 		return m.row(head, cursor, focused) + "\n"
 	}
 	head := p.muted.Render(icNote) + " " + lipgloss.NewStyle().Bold(true).Render("Note for the agent")
@@ -1746,7 +1747,11 @@ func (m *model) viewReview() string {
 			body := p.muted.Render("│") + " " + strings.ReplaceAll(wrap(st.note, w-8), "\n", "\n"+p.muted.Render("│")+" ")
 			b.WriteString("\n" + indent(head+"\n"+body, 3) + "\n")
 		default:
-			b.WriteString(indent(link(fmt.Sprintf("edit-%d", i), "+ Add note"), 3) + "\n")
+			add := link(fmt.Sprintf("edit-%d", i), "+ Add note")
+			if len(st.thread) > 0 {
+				add += "    " + link(fmt.Sprintf("draft-%d", i), icBot+" Draft from discussion")
+			}
+			b.WriteString(indent(add, 3) + "\n")
 		}
 	}
 	send := fmt.Sprintf("Send %d answers ✓", len(m.qs))
@@ -1789,8 +1794,20 @@ func (m *model) viewReframe() string {
 		}
 		b.WriteString("\n")
 	}
-	box := m.marker(true, m.inclSum)
-	b.WriteString(mark("reason-incl", box+" Also include the discussion summary (drafted by the side agent)") + "\n")
+	var noted []int
+	for i, st := range m.qs {
+		if st.flagged && strings.TrimSpace(st.note) != "" {
+			noted = append(noted, i)
+		}
+	}
+	if len(noted) > 0 {
+		b.WriteString(mark("reason-incl", m.marker(true, m.inclSum)+" Also send my note for the agent") + "\n")
+		for _, i := range noted {
+			body := p.muted.Render("│") + " " + strings.ReplaceAll(wrap(strings.TrimSpace(m.qs[i].note), w-6), "\n", "\n"+p.muted.Render("│")+" ")
+			b.WriteString(indent(p.muted.Render(m.header(i))+"\n"+body, 4) + "\n")
+		}
+		b.WriteString("\n")
+	}
 	b.WriteString(p.muted.Render(wrap("Your answers to the other questions go back too, so the agent can keep them.", w)) + "\n\n")
 	b.WriteString(spread(w, "", link("reason-cancel", "Cancel")+"    "+m.button("reason-send", "Send back")))
 	return b.String()

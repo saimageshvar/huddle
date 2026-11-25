@@ -74,6 +74,7 @@ func runHook() {
 	if block == "" {
 		return
 	}
+	pruneCalls()
 	dir := filepath.Join(huddleHome(), "calls", fmt.Sprintf("%s-%.8s", time.Now().Format("20060102-150405"), in.SessionID))
 	if os.MkdirAll(dir, 0o700) != nil {
 		return
@@ -233,4 +234,15 @@ func rexBin() string {
 		return p
 	}
 	return "rex"
+}
+
+// pruneCalls drops call directories untouched for a week; each holds one question's request, response and images.
+func pruneCalls() {
+	root := filepath.Join(huddleHome(), "calls")
+	entries, _ := os.ReadDir(root)
+	for _, e := range entries {
+		if info, err := e.Info(); err == nil && time.Since(info.ModTime()) > 7*24*time.Hour {
+			os.RemoveAll(filepath.Join(root, e.Name()))
+		}
+	}
 }
