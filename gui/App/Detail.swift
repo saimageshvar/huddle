@@ -17,6 +17,15 @@ struct DetailView: View {
                 footer
             }
             if call.sendBackOpen { SendBackSheet(store: store, call: call) }
+            if let big = call.bigImage, let img = NSImage(contentsOfFile: big) {
+                ZStack {
+                    Color.black.opacity(0.5).onTapGesture { call.bigImage = nil }
+                    VStack(spacing: 10) {
+                        Image(nsImage: img).resizable().scaledToFit().frame(maxWidth: 760, maxHeight: 520)
+                        PrimaryButton(title: "Close") { call.bigImage = nil }
+                    }.padding(20).background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .windowBackgroundColor)))
+                }
+            }
             if let f = call.flash {
                 VStack { Spacer(); Text(f).padding(.horizontal, 14).padding(.vertical, 8)
                     .foregroundColor(T.inkText).background(RoundedRectangle(cornerRadius: 8).fill(T.ink)).padding(.bottom, 70) }
@@ -197,8 +206,8 @@ struct OptionCard: View {
             }.padding(12)
             if open, let p = o.preview {
                 Divider()
-                Text(p).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(12)
+                ScrollView { MarkdownView(text: p).padding(12) }
+                    .frame(maxHeight: 280)
             }
         }
         .background(RoundedRectangle(cornerRadius: 10).fill(on ? T.faint : Color.clear))
@@ -224,7 +233,7 @@ struct OtherCard: View {
                 Text("Something else…").fontWeight(.semibold)
                 Spacer()
             }
-            if on { BoxedTextArea(text: $call.q[i].other, placeholder: "Your own answer", minHeight: 70) }
+            if on { AttachArea(call: call, key: "q\(i).other", text: $call.q[i].other, placeholder: "Your own answer · paste an image with ⌘V", minHeight: 70) }
         }
         .padding(12)
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(on ? T.ink : T.border, lineWidth: on ? 2 : 1))
@@ -244,8 +253,9 @@ struct NoteBox: View {
                 Text("Note for the agent").fontWeight(.semibold)
                 Text("optional").foregroundColor(T.muted)
             }
-            BoxedTextArea(text: Binding(get: { call.q[i].note }, set: { call.q[i].note = $0; call.noteTyped(i) }),
-                          placeholder: "Anything the agent should know about this answer…", minHeight: 44)
+            AttachArea(call: call, key: "q\(i).note", text: Binding(get: { call.q[i].note }, set: { call.q[i].note = $0; call.noteTyped(i) }),
+                       placeholder: "Anything the agent should know about this answer…", minHeight: 44)
+            Text("Paste an image with ⌘V").font(.caption).foregroundColor(T.muted)
             HStack(spacing: 10) {
                 if st.drafting {
                     ProgressView().controlSize(.small)

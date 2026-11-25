@@ -77,9 +77,9 @@ struct ChatPane: View {
     }
 
     var composer: some View {
-        BoxedTextArea(text: $call.q[i].input,
-                      placeholder: "Ask about this question · Enter to send, Shift+Enter for a new line",
-                      minHeight: 56, submitOnEnter: true) { call.sendChat(i, call.q[i].input) }
+        AttachArea(call: call, key: "q\(i).chat", text: $call.q[i].input,
+                   placeholder: "Ask about this question · Enter to send, Shift+Enter for a new line · paste an image",
+                   minHeight: 56, submitOnEnter: true) { call.sendChat(i, call.q[i].input) }
             .padding(12)
             .disabled(!call.live)
     }
@@ -105,7 +105,16 @@ struct MsgView: View {
             Text("You · \(hhmm(msg.time))").font(.caption).foregroundColor(T.muted)
             HStack(alignment: .top, spacing: 8) {
                 Spacer(minLength: 40)
-                Text(msg.text).textSelection(.enabled)
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(msg.images, id: \.self) { p in
+                        if let img = NSImage(contentsOfFile: p) {
+                            Image(nsImage: img).resizable().scaledToFit().frame(maxWidth: 220, maxHeight: 140)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .onTapGesture { call.bigImage = p }
+                        }
+                    }
+                    Text(msg.text).textSelection(.enabled)
+                }
                     .padding(.horizontal, 14).padding(.vertical, 10)
                     .foregroundColor(T.inkText)
                     .background(RoundedRectangle(cornerRadius: 16).fill(T.ink))
@@ -148,7 +157,7 @@ struct MsgView: View {
             if msg.text.isEmpty {
                 Text(msg.tool ?? "Thinking…").italic().foregroundColor(T.muted)
             } else {
-                Text(msg.text).textSelection(.enabled).foregroundColor(msg.failed ? .red : T.ink)
+                if msg.failed { Text(msg.text).foregroundColor(.red) } else { MarkdownView(text: msg.text) }
             }
         }
         .fixedSize(horizontal: false, vertical: true)

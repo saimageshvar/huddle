@@ -51,8 +51,34 @@ struct LinkButton: View {
 }
 
 /// NSTextView draws the placeholder at the same inset as the text and cursor, so they cannot drift apart.
+struct Attachment: Identifiable {
+    let id = UUID()
+    let path: String
+    let image: NSImage
+}
+
 final class PlaceholderTextView: NSTextView {
     var placeholder = ""
+    var onPasteImage: ((Data) -> Void)?
+
+    /// An image on the pasteboard becomes an attachment; anything with text in it pastes as text.
+    override func paste(_ sender: Any?) {
+        let pb = NSPasteboard.general
+        if onPasteImage != nil, pb.string(forType: .string) == nil, let data = Self.pngData(pb) {
+            onPasteImage?(data)
+            return
+        }
+        super.paste(sender)
+    }
+
+    static func pngData(_ pb: NSPasteboard) -> Data? {
+        func png(_ d: Data) -> Data? { NSBitmapImageRep(data: d)?.representation(using: .png, properties: [:]) }
+        if let d = pb.data(forType: .png) { return d }
+        if let d = pb.data(forType: .tiff) { return png(d) }
+        let opts: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true, .urlReadingContentsConformToTypes: ["public.image"]]
+        if let u = (pb.readObjects(forClasses: [NSURL.self], options: opts) as? [URL])?.first, let d = try? Data(contentsOf: u) { return png(d) }
+        return nil
+    }
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         guard string.isEmpty else { return }
@@ -70,6 +96,7 @@ struct TextArea: NSViewRepresentable {
     var maxHeight: CGFloat = 180
     var submitOnEnter = false
     var onSubmit: (() -> Void)? = nil
+    var onPasteImage: ((Data) -> Void)? = nil
     static let inset = NSSize(width: 10, height: 9)
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -89,6 +116,7 @@ struct TextArea: NSViewRepresentable {
         tv.isVerticallyResizable = true
         tv.autoresizingMask = [.width]
         tv.placeholder = placeholder
+        tv.onPasteImage = onPasteImage
         tv.string = text
         let sv = NSScrollView()
         sv.drawsBackground = false
@@ -103,6 +131,7 @@ struct TextArea: NSViewRepresentable {
         guard let tv = sv.documentView as? PlaceholderTextView else { return }
         if tv.string != text { tv.string = text }
         tv.placeholder = placeholder
+        tv.onPasteImage = onPasteImage
         tv.needsDisplay = true
     }
 
@@ -143,5 +172,44 @@ struct BoxedTextArea: View {
         TextArea(text: $text, placeholder: placeholder, minHeight: minHeight, submitOnEnter: submitOnEnter, onSubmit: onSubmit)
             .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(T.border))
+    }
+}
+
+/// The text box every answer, note and chat message uses: thumbnails of pasted images on top, text below.
+struct AttachArea: View {
+    @ObservedObject var call: CallModel
+    let key: String
+    @Binding var text: String
+    var placeholder = ""
+    var minHeight: CGFloat = 60
+    var submitOnEnter = false
+    var onSubmit: (() -> Void)? = nil
+
+    var body: some View {
+        let imgs = call.attachments[key] ?? []
+        VStack(alignment: .leading, spacing: 0) {
+            if !imgs.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(imgs) { a in
+                            ZStack(alignment: .topTrailing) {
+                                Image(nsImage: a.image).resizable().scaledToFill()
+                                    .frame(width: 64, height: 64).clipShape(RoundedRectangle(cornerRadius: 8))
+                                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(T.border))
+                                    .onTapGesture { call.bigImage = a.path }
+                                Button { call.removeImage(key, a.id) } label: {
+                                    Image(systemName: "xmark.circle.fill").foregroundColor(T.ink)
+                                        .background(Circle().fill(Color(nsColor: .windowBackgroundColor)))
+                                }.buttonStyle(.plain).offset(x: 6, y: -6)
+                            }
+                        }
+                    }.padding(.horizontal, 10).padding(.top, 12).padding(.bottom, 2)
+                }
+            }
+            TextArea(text: $text, placeholder: placeholder, minHeight: minHeight, submitOnEnter: submitOnEnter, onSubmit: onSubmit,
+                     onPasteImage: { call.addImage($0, key) })
+        }
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(T.border))
     }
 }

@@ -30,6 +30,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         store.onEmpty = { [weak self] in self?.window.orderOut(nil) }
         refreshStatus()
+        installEditMenu()
+        pruneCalls()
+    }
+
+    /// An accessory app has no main menu, and without an Edit menu macOS never delivers ⌘C, ⌘V or ⌘Z to text fields.
+    func installEditMenu() {
+        let main = NSMenu()
+        let editItem = NSMenuItem()
+        main.addItem(editItem)
+        let edit = NSMenu(title: "Edit")
+        func add(_ title: String, _ sel: Selector, _ key: String, shift: Bool = false) {
+            let it = NSMenuItem(title: title, action: sel, keyEquivalent: key)
+            if shift { it.keyEquivalentModifierMask = [.command, .shift] }
+            edit.addItem(it)
+        }
+        add("Undo", Selector(("undo:")), "z")
+        add("Redo", Selector(("redo:")), "z", shift: true)
+        edit.addItem(.separator())
+        add("Cut", #selector(NSText.cut(_:)), "x")
+        add("Copy", #selector(NSText.copy(_:)), "c")
+        add("Paste", #selector(NSText.paste(_:)), "v")
+        add("Select All", #selector(NSText.selectAll(_:)), "a")
+        editItem.submenu = edit
+        NSApp.mainMenu = main
+    }
+
+    func pruneCalls() {
+        let root = huddleHome + "/calls"
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: root)) ?? [] {
+            let p = root + "/" + name
+            if let d = (try? FileManager.default.attributesOfItem(atPath: p))?[.modificationDate] as? Date, Date().timeIntervalSince(d) > 7 * 86400 {
+                try? FileManager.default.removeItem(atPath: p)
+            }
+        }
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool { sender.orderOut(nil); return false }

@@ -26,6 +26,7 @@ struct ChatMsg: Identifiable {
     var live = false
     var failed = false
     var tool: String? = nil
+    var images: [String] = []
 }
 
 enum CallState { case pending, answered, expired, cancelled }
@@ -48,7 +49,9 @@ final class CallModel: ObservableObject, Identifiable {
             DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in if self?.flash == f { self?.flash = nil } }
         }
     }
-    @Published var restartNeeded = false
+    @Published var attachments: [String: [Attachment]] = [:]
+    @Published var bigImage: String?
+    private var dirPath: String?
     private var agent: SideAgent?
     private var sessionId = ""
     private var nextReq = 0
@@ -63,9 +66,45 @@ final class CallModel: ObservableObject, Identifiable {
         threads = Array(repeating: [], count: request.questions.count)
     }
 
+    // MARK: pasted images
+
+    private var callDir: String {
+        if let d = dirPath { return d }
+        let f = DateFormatter()
+        f.dateFormat = "yyyyMMdd-HHmmss"
+        let d = "\(huddleHome)/calls/\(f.string(from: arrival))-\(request.sessionId.prefix(8))"
+        try? FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        dirPath = d
+        return d
+    }
+
+    func addImage(_ data: Data, _ key: String) {
+        guard let img = NSImage(data: data) else { return }
+        let n = (attachments[key]?.count ?? 0) + 1
+        var path = "\(callDir)/\(key.replacingOccurrences(of: ".", with: "-"))-\(n).png"
+        var k = n
+        while FileManager.default.fileExists(atPath: path) { k += 1; path = "\(callDir)/\(key.replacingOccurrences(of: ".", with: "-"))-\(k).png" }
+        guard (try? data.write(to: URL(fileURLWithPath: path))) != nil else { return }
+        attachments[key, default: []].append(Attachment(path: path, image: img))
+    }
+
+    func removeImage(_ key: String, _ id: UUID) {
+        if let a = attachments[key]?.first(where: { $0.id == id }) { try? FileManager.default.removeItem(atPath: a.path) }
+        attachments[key]?.removeAll { $0.id == id }
+    }
+
+    func imagePaths(_ key: String) -> [String] { (attachments[key] ?? []).map { $0.path } }
+
+    /// The text plus one `[image: path]` line per pasted image, which is how the agent gets at them.
+    func withImages(_ key: String, _ text: String) -> String {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lines = imagePaths(key).map { "[image: \($0)]" }
+        return ([t].filter { !$0.isEmpty } + lines).joined(separator: "\n")
+    }
+
     // MARK: side agent
 
-    private func ask(_ qi: Int, _ kind: String, _ text: String) -> Bool {
+    private func ask(_ qi: Int, _ kind: String, _ text: String, images: [String] = []) -> Bool {
         if let a = agent, a.model != Prefs.model || a.effort != Prefs.effort {
             sessionId = a.sessionId
             a.stop()
@@ -79,17 +118,21 @@ final class CallModel: ObservableObject, Identifiable {
         let id = nextReq
         nextReq += 1
         reqs[id] = (qi, kind)
-        a.send(id, text)
+        a.send(id, text, images: images)
         return true
     }
 
     func sendChat(_ qi: Int, _ text: String) {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard live, !t.isEmpty else { return }
-        threads[qi].append(ChatMsg(mine: true, text: t))
+        guard live, !t.isEmpty || !(attachments["q\(qi).chat"] ?? []).isEmpty else { return }
+        let paths = imagePaths("q\(qi).chat")
+        var m = ChatMsg(mine: true, text: t)
+        m.images = paths
+        threads[qi].append(m)
         threads[qi].append(ChatMsg(mine: false, text: "", live: true))
         q[qi].input = ""
-        if !ask(qi, "chat", "[Q\(qi + 1): \(header(qi))] \(t)") { fail(qi, "chat", "Could not start the assistant. Is the claude command installed?") }
+        attachments["q\(qi).chat"] = nil
+        if !ask(qi, "chat", "[Q\(qi + 1): \(header(qi))] \(t)", images: paths) { fail(qi, "chat", "Could not start the assistant. Is the claude command installed?") }
     }
 
     func draftNote(_ qi: Int) {
@@ -182,7 +225,7 @@ final class CallModel: ObservableObject, Identifiable {
     func answerText(_ i: Int) -> String {
         let opts = request.questions[i].options
         var parts = q[i].picked.filter { $0 < opts.count }.sorted().map { opts[$0].label }
-        let other = q[i].other.trimmingCharacters(in: .whitespacesAndNewlines)
+        let other = withImages("q\(i).other", q[i].other)
         if q[i].picked.contains(otherIndex(i)) && !other.isEmpty { parts.append(other) }
         return parts.joined(separator: ", ")
     }
@@ -214,7 +257,7 @@ final class CallModel: ObservableObject, Identifiable {
         for (i, question) in request.questions.enumerated() {
             let a = answerText(i)
             answers[question.question] = a.isEmpty ? skippedAnswer : a
-            let n = q[i].note.trimmingCharacters(in: .whitespacesAndNewlines)
+            let n = withImages("q\(i).note", q[i].note)
             if !n.isEmpty { notes[question.question] = ["notes": n] }
         }
         return Response(kind: "answer", answers: answers, annotations: notes, reason: nil)

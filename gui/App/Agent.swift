@@ -125,9 +125,19 @@ final class SideAgent {
         Thread.detachNewThread { [weak self] in self?.read(outFd) }
     }
 
-    func send(_ req: Int, _ text: String) {
+    func send(_ req: Int, _ text: String, images: [String] = []) {
         lock.lock(); queue.append(req); lock.unlock()
-        let msg: [String: Any] = ["type": "user", "message": ["role": "user", "content": text]]
+        var content: Any = text
+        if !images.isEmpty {
+            var blocks: [[String: Any]] = [["type": "text", "text": text]]
+            for p in images {
+                if let d = try? Data(contentsOf: URL(fileURLWithPath: p)) {
+                    blocks.append(["type": "image", "source": ["type": "base64", "media_type": "image/png", "data": d.base64EncodedString()]])
+                }
+            }
+            content = blocks
+        }
+        let msg: [String: Any] = ["type": "user", "message": ["role": "user", "content": content]]
         guard var data = try? JSONSerialization.data(withJSONObject: msg) else { return }
         data.append(10)
         if !writeAll(stdinFd, data) { emit(req, .error, "Could not reach the assistant.") }
