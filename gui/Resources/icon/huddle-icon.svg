@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024"><defs>
+<filter id="pn" x="-4%" y="-4%" width="108%" height="108%">
+<feTurbulence type="fractalNoise" baseFrequency="0.012" numOctaves="2" seed="7" result="w"/>
+<feDisplacementMap in="SourceGraphic" in2="w" scale="8" result="d"/>
+<feTurbulence type="fractalNoise" baseFrequency="0.7" numOctaves="2" seed="2" result="g"/>
+<feColorMatrix in="g" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  2.6 0 0 0 -0.3" result="ga"/>
+<feComposite in="d" in2="ga" operator="in"/>
+</filter>
+<pattern id="h1" width="16" height="16" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="16" stroke="#4a4a4a" stroke-width="2.4"/></pattern>
+<pattern id="h2" width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="9" stroke="#2b2b2b" stroke-width="3.4"/></pattern>
+<pattern id="h3" width="22" height="22" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)"><line x1="0" y1="0" x2="0" y2="22" stroke="#6a6a6a" stroke-width="1.8"/></pattern>
+</defs><style>.g{stroke:#2b2b2b;stroke-linecap:round;stroke-linejoin:round;fill:none}
+.g .pp{fill:#fbfaf6}
+.g .s1{stroke-width:11}.g .s2{stroke-width:8}.g .s3{stroke-width:18}.g .s4{stroke-width:26}
+.g .hf1{fill:url(#h1)}.g .hf2{fill:url(#h2)}
+.g .ink{fill:#2b2b2b}</style>
+<rect width="1024" height="1024" rx="230" fill="#f1eee4"/>
+<g filter="url(#pn)" class="g">
+<path d="M796 214L842 246V858L796 884Z" class="hf2 s2"/>
+<rect x="232" y="150" width="560" height="734" rx="60" class="pp s1"/>
+<rect x="232" y="150" width="560" height="734" rx="60" class="hf1" stroke="none"/>
+<rect x="292" y="252" width="440" height="566" rx="24" class="pp s2"/>
+<rect x="372" y="98" width="280" height="132" rx="38" class="hf2 s1"/>
+<circle cx="512" cy="150" r="20" class="pp s2"/>
+<path d="M335 306H500" class="s4"/>
+<rect x="335" y="372" width="70" height="70" rx="12" class="s2"/>
+<path d="M349 408L372 434L414 374" class="s3"/>
+<rect x="335" y="512" width="70" height="70" rx="12" class="s2"/>
+<rect x="335" y="652" width="70" height="70" rx="12" class="s2"/>
+<path d="M446 408H684M446 548H640M446 688H582" class="s3"/>
+<path d="M300 790Q420 800 560 786" class="s2" stroke="#8a8a8a"/>
+</g>
+</svg>
