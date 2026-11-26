@@ -155,6 +155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let para = NSMutableParagraphStyle()
         para.tabStops = [NSTextTab(textAlignment: .right, location: 270)]
         let s = NSMutableAttributedString(string: left, attributes: [.font: NSFont.systemFont(ofSize: 13, weight: bold ? .semibold : .regular), .paragraphStyle: para])
+        if right.isEmpty { return s }
         s.append(NSAttributedString(string: "\t" + right, attributes: [.font: NSFont.systemFont(ofSize: 13),
                                                                        .foregroundColor: dimRight ? NSColor.secondaryLabelColor : NSColor.labelColor, .paragraphStyle: para]))
         return s
@@ -165,7 +166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         status.button?.title = ""
         let menu = NSMenu()
         let head = NSMenuItem()
-        head.attributedTitle = rowTitle(store.waiting == 0 ? "Nothing waiting" : "\(store.waiting) waiting", "chime on arrival", bold: true)
+        head.attributedTitle = rowTitle(store.waiting == 0 ? "Nothing waiting" : "\(store.waiting) waiting", "", bold: true)
         head.isEnabled = false
         menu.addItem(head)
         for c in store.calls {
@@ -187,7 +188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         open.target = self
         menu.addItem(open)
         let quit = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        quit.attributedTitle = rowTitle("Quit", "calls fall back to the agent")
+        quit.attributedTitle = rowTitle("Quit", "")
         menu.addItem(quit)
         status.menu = menu
     }
