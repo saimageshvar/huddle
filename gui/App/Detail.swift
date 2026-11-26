@@ -51,7 +51,7 @@ struct DetailView: View {
                 dots
                 Divider()
                 if !call.live { banner }
-                QuestionView(call: call, i: call.tab, compact: true, caption: false).disabled(!call.live)
+                QuestionView(call: call, i: call.tab, compact: true, caption: false).id(call.tab).disabled(!call.live)
                 Divider()
                 footer
             }.frame(width: 340)
@@ -164,14 +164,14 @@ struct SplitPane: View {
                     Divider()
                     ChatPane(call: call, i: i, zoomed: false).id(i)
                 } else if layout.chatCollapsed {
-                    QuestionView(call: call, i: i, compact: false).disabled(!call.live)
+                    QuestionView(call: call, i: i, compact: false).id(i).disabled(!call.live)
                     Divider()
                     PaneStrip(icon: "bubble.left", badge: call.unread > 0 ? "\(call.unread) new" : nil, caption: nil, opens: -1) {
                         animate { layout.chatCollapsed = false }; call.unread = 0
                     }
                 } else {
                     let q = min(max(w * CGFloat(layout.ratio), LayoutState.questionMin), w - LayoutState.chatMin)
-                    QuestionView(call: call, i: i, compact: q < 420).disabled(!call.live).frame(width: q)
+                    QuestionView(call: call, i: i, compact: q < 420).id(i).disabled(!call.live).frame(width: q)
                         .opacity(layout.pendingCollapse == -1 ? 0.35 : 1)
                     SplitHandle(total: w)
                     ChatPane(call: call, i: i, zoomed: false).id(i)
@@ -287,8 +287,12 @@ struct QuestionView: View {
     func handleKey(_ k: String) -> Bool {
         let n = question.options.count + 1
         switch k {
+        case "last":
+            call.kbFocus[i] = n - 1
+            return true
         case "up", "down":
             let cur = call.kbFocus[i] ?? call.q[i].picked.first ?? -1
+            if k == "down" && cur >= n - 1 { call.kbFocus[i] = nil; return false }
             let next = min(max(cur + (k == "down" ? 1 : -1), 0), n - 1)
             animate { call.q[i].previewOpen = next < question.options.count && question.options[next].preview != nil ? next : nil }
             call.kbFocus[i] = next

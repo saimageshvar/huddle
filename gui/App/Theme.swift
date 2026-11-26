@@ -90,6 +90,13 @@ final class PlaceholderTextView: NSTextView {
         onPasteImage == nil ? super.readablePasteboardTypes : super.readablePasteboardTypes + [.png, .tiff, .fileURL]
     }
 
+    /// True when the caret sits on the first visual line, so Up should leave the box instead of moving the caret.
+    var caretOnFirstLine: Bool {
+        guard let lm = layoutManager, string.count > 0 else { return true }
+        let i = min(selectedRange().location, max(string.count - 1, 0))
+        return lm.lineFragmentRect(forGlyphAt: lm.glyphIndexForCharacter(at: i), effectiveRange: nil).minY <= 1
+    }
+
     static func pngData(_ pb: NSPasteboard) -> Data? {
         func png(_ d: Data) -> Data? { NSBitmapImageRep(data: d)?.representation(using: .png, properties: [:]) }
         if let d = pb.data(forType: .png) { return d }

@@ -29,8 +29,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.makeFirstResponder(c)
             return true
         case 126, 125, 49:
-            if field != nil { return false }
-            return call.keyHandlers[call.tab]?(e.keyCode == 126 ? "up" : e.keyCode == 125 ? "down" : "space") ?? false
+            if let f = field {
+                guard f.key.hasSuffix(".note"), e.keyCode == 126, f.caretOnFirstLine else { return false }
+                window.makeFirstResponder(window.contentView)
+                return call.keyHandlers[call.tab]?("last") ?? false
+            }
+            let k = e.keyCode == 126 ? "up" : e.keyCode == 125 ? "down" : "space"
+            if call.keyHandlers[call.tab]?(k) == true { return true }
+            if k == "down", let n = Self.field("q\(call.tab).note", in: window.contentView) { window.makeFirstResponder(n); return true }
+            return false
         default: return false
         }
     }

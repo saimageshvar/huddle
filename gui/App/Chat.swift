@@ -44,38 +44,7 @@ struct ChatPane: View {
         }.padding(.horizontal, 16).padding(.vertical, 10)
     }
 
-    /// One pill for model and effort; each model opens a submenu to the right with the efforts.
-    var pickers: some View {
-        Menu {
-            ForEach(Prefs.models, id: \.id) { m in
-                Menu((prefs.model == m.id ? "✓ " : "") + m.name + " — " + m.note) {
-                    ForEach(Prefs.efforts, id: \.self) { e in
-                        Button {
-                            prefs.model = m.id
-                            prefs.effort = e
-                        } label: {
-                            let on = prefs.model == m.id && prefs.effort == e
-                            Text((on ? "✓ " : "") + e.capitalized + (e == "medium" ? " — Reads the relevant part of the conversation, then answers." : ""))
-                        }
-                    }
-                }
-            }
-            Divider()
-            Button("Reset to default (Sonnet 5.5 · Medium)") { prefs.model = "sonnet"; prefs.effort = "medium" }
-            Text("Applies from your next message")
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "cpu")
-                Text("\(Prefs.modelName(prefs.model)) · \(prefs.effort.capitalized)").lineLimit(1)
-                Image(systemName: "chevron.down").font(.caption)
-            }
-            .padding(.horizontal, 10).padding(.vertical, 6)
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(T.border))
-        }
-        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
-        .accessibilityLabel("Model and effort: \(Prefs.modelName(prefs.model)), \(prefs.effort) effort")
-        .help("Model and effort for the assistant")
-    }
+    var pickers: some View { ModelPicker() }
 
     var messages: some View {
         ScrollViewReader { proxy in
@@ -252,4 +221,81 @@ func confirmReplaceNote() -> Bool {
     a.addButton(withTitle: "Replace")
     a.addButton(withTitle: "Cancel")
     return a.runModal() == .alertFirstButtonReturn
+}
+
+final class PickerState: ObservableObject {
+    @Published var open = false
+    @Published var hot = Prefs.model
+}
+
+/// One pill for model and effort. Its popover lists model names; the one under the pointer shows its efforts beside it.
+struct ModelPicker: View {
+    @ObservedObject var prefs = PrefsObject.shared
+    @StateObject private var st = PickerState()
+
+    var body: some View {
+        Button { st.hot = prefs.model; st.open.toggle() } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "cpu")
+                Text("\(Prefs.modelName(prefs.model)) · \(prefs.effort.capitalized)").lineLimit(1)
+                Image(systemName: "chevron.down").font(.caption)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(T.border))
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain).fixedSize()
+        .accessibilityLabel("Model and effort: \(Prefs.modelName(prefs.model)), \(prefs.effort) effort")
+        .help("Model and effort for the assistant")
+        .popover(isPresented: Binding(get: { st.open }, set: { st.open = $0 }), arrowEdge: .bottom) { panel }
+    }
+
+    var panel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 6) {
+                VStack(spacing: 2) {
+                    ForEach(Prefs.models, id: \.id) { m in
+                        PickerRow(title: m.name, checked: prefs.model == m.id, lit: st.hot == m.id, chevron: true) {
+                            prefs.model = m.id; st.open = false
+                        } hover: { if $0 { st.hot = m.id } }
+                    }
+                }.frame(width: 150)
+                Rectangle().fill(T.border).frame(width: 1)
+                VStack(spacing: 2) {
+                    ForEach(Prefs.efforts, id: \.self) { e in
+                        PickerRow(title: e.capitalized, checked: prefs.model == st.hot && prefs.effort == e, lit: false, chevron: false) {
+                            prefs.model = st.hot; prefs.effort = e; st.open = false
+                        } hover: { _ in }
+                    }
+                }.frame(width: 96)
+            }
+            Text("Applies from your next message").font(.caption).foregroundColor(T.muted).padding(.horizontal, 10)
+        }.padding(8).fixedSize()
+    }
+}
+
+struct PickerRow: View {
+    let title: String
+    let checked: Bool
+    let lit: Bool
+    let chevron: Bool
+    let action: () -> Void
+    let hover: (Bool) -> Void
+    @StateObject private var over = Flag()
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark").font(.caption.weight(.semibold)).opacity(checked ? 1 : 0).frame(width: 12)
+                Text(title)
+                Spacer(minLength: 8)
+                if chevron { Image(systemName: "chevron.right").font(.caption2).foregroundColor(T.muted) }
+            }
+            .padding(.horizontal, 8).padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 6).fill(over.on || lit ? T.faint : Color.clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { over.on = $0; hover($0) }
+    }
 }
