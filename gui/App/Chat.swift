@@ -111,8 +111,10 @@ struct ChatPane: View {
                        minHeight: 56, maxHeight: 200, submitOnEnter: true) { call.sendChat(i, call.q[i].input) }
             if busy {
                 Button { call.stopChat() } label: {
-                    Image(systemName: "stop.fill").frame(width: 44, height: 44)
+                    Image(systemName: "stop.fill").font(.system(size: 13)).frame(width: 38, height: 38)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(Color(NSColor.controlBackgroundColor)))
                         .overlay(RoundedRectangle(cornerRadius: 10).stroke(T.border))
+                        .contentShape(RoundedRectangle(cornerRadius: 10))
                 }.buttonStyle(.plain).help("Stop the answer")
             }
         }

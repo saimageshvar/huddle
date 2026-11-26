@@ -7,6 +7,7 @@ final class LayoutState: ObservableObject {
     static let questionMin: CGFloat = 320
     static let chatMin: CGFloat = 300
     static let strip: CGFloat = 52
+    static let footerHeight: CGFloat = 66
     /// How far past a pane's minimum the divider must be dragged, and released, before that pane collapses.
     static let collapseSlack: CGFloat = 120
 

@@ -38,7 +38,7 @@ struct Sidebar: View {
             }
             Divider()
             Text("Listening in the menu bar").font(.callout).foregroundColor(T.muted)
-                .frame(maxWidth: .infinity, alignment: .leading).padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16).frame(height: LayoutState.footerHeight)
         }.background(T.faint)
     }
 }

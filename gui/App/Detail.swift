@@ -88,7 +88,7 @@ struct DetailView: View {
                 ClockBadge(text: "\(max(1, Int(store.remaining(call) / 60))) min left", warn: store.remaining(call) < 300)
                 OutlineButton(title: "Send back…", icon: "arrow.uturn.left") { openSendBack() }
             }
-        }.padding(.horizontal, 20).padding(.vertical, 14)
+        }.padding(.horizontal, 20).frame(height: LayoutState.footerHeight)
     }
 
     func openSendBack() {
