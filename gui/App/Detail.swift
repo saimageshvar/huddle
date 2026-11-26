@@ -31,7 +31,6 @@ struct DetailView: View {
             header
             Divider()
             tabs
-            Divider()
             if !call.live { banner }
             content
             Divider()
@@ -96,7 +95,7 @@ struct DetailView: View {
     }
 
     var tabs: some View {
-        HStack(spacing: 4) {
+        HStack(alignment: .bottom, spacing: 2) {
             ForEach(0..<call.q.count, id: \.self) { i in
                 TabButton(selected: call.tab == i, label: call.header(i),
                           icon: call.answered(i) ? "checkmark.circle" : "circle",
@@ -104,7 +103,9 @@ struct DetailView: View {
             }
             TabButton(selected: call.tab == call.q.count, label: "Review", icon: nil, badge: false, chat: false) { call.tab = call.q.count }
             Spacer()
-        }.padding(.horizontal, 20).padding(.top, 8)
+        }
+        .padding(.horizontal, 20).padding(.top, 14)
+        .background(alignment: .bottom) { Rectangle().fill(T.border).frame(height: 1) }
     }
 
     var banner: some View {
@@ -155,26 +156,29 @@ struct SplitPane: View {
             HStack(spacing: 0) {
                 if layout.questionCollapsed {
                     PaneStrip(icon: call.answered(i) ? "largecircle.fill.circle" : "circle", badge: call.answered(i) ? "◉ \(call.answeredCount)" : nil,
-                              caption: "Q\(i + 1)") { layout.questionCollapsed = false }
+                              caption: "Q\(i + 1)", opens: 1) { layout.questionCollapsed = false }
                     Divider()
                     ChatPane(call: call, i: i, zoomed: false).id(i)
                 } else if layout.chatCollapsed {
                     QuestionView(call: call, i: i, compact: false).disabled(!call.live)
                     Divider()
-                    PaneStrip(icon: "bubble.left", badge: call.unread > 0 ? "\(call.unread) new" : nil, caption: nil) {
+                    PaneStrip(icon: "bubble.left", badge: call.unread > 0 ? "\(call.unread) new" : nil, caption: nil, opens: -1) {
                         layout.chatCollapsed = false; call.unread = 0
                     }
                 } else {
                     let q = min(max(w * CGFloat(layout.ratio), LayoutState.questionMin), w - LayoutState.chatMin)
                     QuestionView(call: call, i: i, compact: q < 420).disabled(!call.live).frame(width: q)
+                        .opacity(layout.pendingCollapse == -1 ? 0.35 : 1)
                     SplitHandle(total: w)
                     ChatPane(call: call, i: i, zoomed: false).id(i)
+                        .opacity(layout.pendingCollapse == 1 ? 0.35 : 1)
                 }
             }.coordinateSpace(name: "split")
         }
     }
 }
 
+/// Folder tab (mocks 1, 2, 6): the selected one is outlined on three sides and covers the strip's bottom rule.
 struct TabButton: View {
     let selected: Bool
     let label: String
@@ -184,16 +188,36 @@ struct TabButton: View {
     let action: () -> Void
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 6) {
-                if let icon = icon { Image(systemName: icon) }
-                Text(label).fontWeight(selected ? .semibold : .regular)
+            HStack(spacing: 7) {
+                if let icon = icon { Image(systemName: icon).font(.system(size: 11)).foregroundColor(selected ? T.ink : T.muted) }
+                Text(label).fontWeight(selected ? .semibold : .regular).foregroundColor(selected ? T.ink : T.ink.opacity(0.8))
                 if badge { Image(systemName: "square.and.pencil").font(.caption) }
                 if chat { Image(systemName: "bubble.left").font(.caption) }
             }
-            .padding(.horizontal, 14).padding(.vertical, 8)
-            .background(selected ? T.faint : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .padding(.horizontal, 18).padding(.vertical, 9)
+            .background {
+                if selected {
+                    UnevenRoundedRectangle(topLeadingRadius: 8, topTrailingRadius: 8).fill(Color(nsColor: .windowBackgroundColor))
+                    OpenBottomTab(radius: 8).stroke(T.border, lineWidth: 1)
+                }
+            }
+            .contentShape(Rectangle())
         }.buttonStyle(.plain)
+    }
+}
+
+/// The tab outline without its bottom edge, so the selected tab opens into the pane below.
+struct OpenBottomTab: Shape {
+    let radius: CGFloat
+    func path(in r: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: r.minX, y: r.maxY + 1))
+        p.addLine(to: CGPoint(x: r.minX, y: r.minY + radius))
+        p.addArc(tangent1End: CGPoint(x: r.minX, y: r.minY), tangent2End: CGPoint(x: r.minX + radius, y: r.minY), radius: radius)
+        p.addLine(to: CGPoint(x: r.maxX - radius, y: r.minY))
+        p.addArc(tangent1End: CGPoint(x: r.maxX, y: r.minY), tangent2End: CGPoint(x: r.maxX, y: r.minY + radius), radius: radius)
+        p.addLine(to: CGPoint(x: r.maxX, y: r.maxY + 1))
+        return p
     }
 }
 

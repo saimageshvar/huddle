@@ -7,8 +7,14 @@ final class LayoutState: ObservableObject {
     static let questionMin: CGFloat = 320
     static let chatMin: CGFloat = 300
     static let strip: CGFloat = 52
+    /// How far past a pane's minimum the divider must be dragged, and released, before that pane collapses.
+    static let collapseSlack: CGFloat = 120
 
-    @Published var ratio: Double { didSet { UserDefaults.standard.set(ratio, forKey: "split") } }
+    @Published var ratio: Double
+    /// Which pane would collapse if the drag ended now: -1 question, 1 chat, 0 none.
+    @Published var pendingCollapse = 0
+    /// Divider x when the current drag began; unpublished so it never triggers a redraw.
+    var dragStart: CGFloat?
     @Published var chatCollapsed = false
     @Published var questionCollapsed = false
     @Published var zoomed = false
@@ -18,7 +24,8 @@ final class LayoutState: ObservableObject {
         ratio = r > 0 ? r : Self.defaultRatio
     }
 
-    func reset() { ratio = Self.defaultRatio; chatCollapsed = false; questionCollapsed = false }
+    func save() { UserDefaults.standard.set(ratio, forKey: "split") }
+    func reset() { ratio = Self.defaultRatio; chatCollapsed = false; questionCollapsed = false; save() }
 }
 
 /// Small flag object: this SDK's @State is a macro the Command Line Tools cannot expand.
@@ -48,31 +55,53 @@ struct SplitHandle: View {
         .contentShape(Rectangle())
         .onHover { hover.on = $0 }
         .onTapGesture(count: 2) { layout.reset() }
-        .gesture(DragGesture(minimumDistance: 2, coordinateSpace: .named("split")).onChanged { v in drag(to: v.location.x) })
+        .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
+            .onChanged { v in drag(v.translation.width) }
+            .onEnded { _ in end() })
         .focusable()
         .focusEffectDisabled()
         .onKeyPress(.leftArrow) { nudge(-0.02); return .handled }
         .onKeyPress(.rightArrow) { nudge(0.02); return .handled }
     }
 
-    func drag(to x: CGFloat) {
-        let q = LayoutState.questionMin, c = LayoutState.chatMin
-        if x < q - 40 { layout.questionCollapsed = true; layout.chatCollapsed = false; return }
-        if total - x < c - 40 { layout.chatCollapsed = true; layout.questionCollapsed = false; return }
-        layout.ratio = Double(min(max(x, q), total - c) / total)
+    /// Anchored to where the drag began, so the moving handle never feeds back into its own position.
+    func drag(_ dx: CGFloat) {
+        let lo = LayoutState.questionMin, hi = total - LayoutState.chatMin, slack = LayoutState.collapseSlack
+        if layout.dragStart == nil { layout.dragStart = min(max(CGFloat(layout.ratio) * total, lo), hi) }
+        let x = layout.dragStart! + dx
+        var t = Transaction(); t.disablesAnimations = true
+        withTransaction(t) {
+            layout.ratio = Double(min(max(x, lo), hi) / total)
+            let p = x < lo - slack ? -1 : x > hi + slack ? 1 : 0
+            if p != layout.pendingCollapse { layout.pendingCollapse = p }
+        }
+    }
+
+    func end() {
+        layout.dragStart = nil
+        switch layout.pendingCollapse {
+        case -1: layout.questionCollapsed = true
+        case 1: layout.chatCollapsed = true
+        default: break
+        }
+        layout.pendingCollapse = 0
+        layout.save()
     }
 
     func nudge(_ d: Double) {
         let lo = Double(LayoutState.questionMin / total), hi = Double(1 - LayoutState.chatMin / total)
         layout.ratio = min(max(layout.ratio + d, lo), hi)
+        layout.save()
     }
 }
 
-/// A pane squeezed below its minimum snaps to this strip; clicking it brings the pane back.
+/// A collapsed pane's strip: click it, or drag it toward the pane's side, to bring the pane back.
 struct PaneStrip: View {
     let icon: String
     let badge: String?
     let caption: String?
+    /// +1 when dragging right reopens the pane (question strip on the left), -1 for the chat strip on the right.
+    let opens: CGFloat
     let action: () -> Void
     var body: some View {
         Button(action: action) {
@@ -85,6 +114,11 @@ struct PaneStrip: View {
                 }
                 Spacer()
             }.padding(.top, 16).frame(width: LayoutState.strip).frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
         }.buttonStyle(.plain).background(T.faint)
+        .help(opens > 0 ? "Click or drag right to bring the question back" : "Click or drag left to bring the chat back")
+        .simultaneousGesture(DragGesture(minimumDistance: 8).onEnded { v in
+            if v.translation.width * opens > 20 { action() }
+        })
     }
 }

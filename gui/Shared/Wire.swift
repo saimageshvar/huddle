@@ -35,7 +35,7 @@ struct Response: Codable {
     var reason: String?
 }
 
-let huddleHome = NSHomeDirectory() + "/.huddle"
+let huddleHome = ProcessInfo.processInfo.environment["HUDDLE_HOME"] ?? NSHomeDirectory() + "/.huddle"
 let socketPath = huddleHome + "/gui.sock"
 
 func withSockAddr<T>(_ path: String, _ body: (UnsafePointer<sockaddr>, socklen_t) -> T) -> T {
