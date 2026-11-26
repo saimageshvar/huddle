@@ -62,6 +62,11 @@ struct SplitHandle: View {
         .focusEffectDisabled()
         .onKeyPress(.leftArrow) { nudge(-0.02); return .handled }
         .onKeyPress(.rightArrow) { nudge(0.02); return .handled }
+        .accessibilityElement()
+        .accessibilityLabel("Divider between question and chat")
+        .accessibilityValue("\(Int(layout.ratio * 100)) percent question")
+        .accessibilityAdjustableAction { d in nudge(d == .increment ? 0.02 : -0.02) }
+        .accessibilityAction(named: "Reset") { layout.reset() }
     }
 
     /// Anchored to where the drag began, so the moving handle never feeds back into its own position.
@@ -77,13 +82,14 @@ struct SplitHandle: View {
         }
     }
 
+    /// A collapse puts the ratio back to where the drag began, so clicking the strip restores that width.
     func end() {
-        layout.dragStart = nil
-        switch layout.pendingCollapse {
-        case -1: layout.questionCollapsed = true
-        case 1: layout.chatCollapsed = true
-        default: break
+        let p = layout.pendingCollapse
+        if p != 0, let start = layout.dragStart {
+            layout.ratio = Double(start / total)
+            animate { if p < 0 { layout.questionCollapsed = true } else { layout.chatCollapsed = true } }
         }
+        layout.dragStart = nil
         layout.pendingCollapse = 0
         layout.save()
     }
@@ -103,9 +109,11 @@ struct PaneStrip: View {
     /// +1 when dragging right reopens the pane (question strip on the left), -1 for the chat strip on the right.
     let opens: CGFloat
     let action: () -> Void
+    @StateObject private var hover = Flag()
     var body: some View {
         Button(action: action) {
             VStack(spacing: 10) {
+                Image(systemName: opens > 0 ? "chevron.right" : "chevron.left").font(.callout.weight(.semibold))
                 Image(systemName: icon).font(.title3)
                 if let c = caption { Text(c).font(.callout) }
                 if let b = badge {
@@ -114,9 +122,12 @@ struct PaneStrip: View {
                 }
                 Spacer()
             }.padding(.top, 16).frame(width: LayoutState.strip).frame(maxHeight: .infinity)
+            .foregroundColor(hover.on ? T.ink : T.ink.opacity(0.75))
             .contentShape(Rectangle())
-        }.buttonStyle(.plain).background(T.faint)
-        .help(opens > 0 ? "Click or drag right to bring the question back" : "Click or drag left to bring the chat back")
+        }.buttonStyle(.plain).background(hover.on ? T.ink.opacity(0.1) : T.faint)
+        .onHover { h in withAnimation(Motion.quick) { hover.on = h } }
+        .help("Click to restore")
+        .accessibilityLabel(opens > 0 ? "Restore the question pane" : "Restore the chat pane")
         .simultaneousGesture(DragGesture(minimumDistance: 8).onEnded { v in
             if v.translation.width * opens > 20 { action() }
         })

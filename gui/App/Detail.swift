@@ -51,7 +51,7 @@ struct DetailView: View {
                 dots
                 Divider()
                 if !call.live { banner }
-                QuestionView(call: call, i: call.tab, compact: true).disabled(!call.live)
+                QuestionView(call: call, i: call.tab, compact: true, caption: false).disabled(!call.live)
                 Divider()
                 footer
             }.frame(width: 340)
@@ -63,12 +63,14 @@ struct DetailView: View {
     var dots: some View {
         HStack(spacing: 8) {
             ForEach(0..<call.q.count, id: \.self) { i in
-                Button { call.tab = i } label: {
+                Button { animate { call.tab = i } } label: {
                     Image(systemName: call.answered(i) ? "checkmark.circle.fill" : (call.tab == i ? "circle.inset.filled" : "circle"))
                         .foregroundColor(call.tab == i ? T.ink : T.muted)
                 }.buttonStyle(.plain).help(call.header(i))
+                .accessibilityLabel("Question \(i + 1), \(call.header(i)), \(call.answered(i) ? "answered" : "unanswered")")
+                .accessibilityAddTraits(call.tab == i ? .isSelected : [])
             }
-            Button { call.tab = call.q.count } label: { Text("Review").font(.callout) }.buttonStyle(.plain).foregroundColor(T.muted)
+            Button { animate { call.tab = call.q.count } } label: { Text("Review").font(.callout) }.buttonStyle(.plain).foregroundColor(T.muted)
             Spacer()
         }.padding(.horizontal, 16).padding(.vertical, 10)
     }
@@ -91,7 +93,7 @@ struct DetailView: View {
 
     func openSendBack() {
         if call.tab < call.q.count { call.q[call.tab].flagged = true }
-        call.sendBackOpen = true
+        animate { call.sendBackOpen = true }
     }
 
     var tabs: some View {
@@ -99,9 +101,10 @@ struct DetailView: View {
             ForEach(0..<call.q.count, id: \.self) { i in
                 TabButton(selected: call.tab == i, label: call.header(i),
                           icon: call.answered(i) ? "checkmark.circle" : "circle",
-                          badge: !call.q[i].note.isEmpty, chat: !call.threads[i].isEmpty) { call.tab = i }
+                          badge: !call.q[i].note.isEmpty, chat: !call.threads[i].isEmpty) { animate { call.tab = i } }
+                    .accessibilityLabel("\(call.header(i)), \(call.answered(i) ? "answered" : "unanswered")")
             }
-            TabButton(selected: call.tab == call.q.count, label: "Review", icon: nil, badge: false, chat: false) { call.tab = call.q.count }
+            TabButton(selected: call.tab == call.q.count, label: "Review", icon: nil, badge: false, chat: false) { animate { call.tab = call.q.count } }
             Spacer()
         }
         .padding(.horizontal, 20).padding(.top, 14)
@@ -133,9 +136,10 @@ struct DetailView: View {
             }
             Spacer()
             if call.tab < call.q.count {
-                PrimaryButton(title: call.tab + 1 < call.q.count ? "Next →" : "Review →") { call.tab += 1 }
+                PrimaryButton(title: call.tab + 1 < call.q.count ? "Next →" : "Review →", shortcut: .init(.return, modifiers: .command)) { animate { call.tab += 1 } }
+                    .help("⌘↩")
             } else {
-                OutlineButton(title: "Back", icon: "arrow.uturn.left") { call.tab = call.q.count - 1 }
+                OutlineButton(title: "Back", icon: "arrow.uturn.left") { animate { call.tab = call.q.count - 1 } }
                 PrimaryButton(title: call.skippedCount > 0 ? "Send answers (\(call.skippedCount) skipped) →" : "Send answers →", enabled: call.live) {
                     store.respond(call, call.answerResponse())
                 }
@@ -156,14 +160,14 @@ struct SplitPane: View {
             HStack(spacing: 0) {
                 if layout.questionCollapsed {
                     PaneStrip(icon: call.answered(i) ? "largecircle.fill.circle" : "circle", badge: call.answered(i) ? "◉ \(call.answeredCount)" : nil,
-                              caption: "Q\(i + 1)", opens: 1) { layout.questionCollapsed = false }
+                              caption: "Q\(i + 1)", opens: 1) { animate { layout.questionCollapsed = false } }
                     Divider()
                     ChatPane(call: call, i: i, zoomed: false).id(i)
                 } else if layout.chatCollapsed {
                     QuestionView(call: call, i: i, compact: false).disabled(!call.live)
                     Divider()
                     PaneStrip(icon: "bubble.left", badge: call.unread > 0 ? "\(call.unread) new" : nil, caption: nil, opens: -1) {
-                        layout.chatCollapsed = false; call.unread = 0
+                        animate { layout.chatCollapsed = false }; call.unread = 0
                     }
                 } else {
                     let q = min(max(w * CGFloat(layout.ratio), LayoutState.questionMin), w - LayoutState.chatMin)
@@ -186,6 +190,7 @@ struct TabButton: View {
     let badge: Bool
     let chat: Bool
     let action: () -> Void
+    @StateObject private var hover = Flag()
     var body: some View {
         Button(action: action) {
             HStack(spacing: 7) {
@@ -201,8 +206,11 @@ struct TabButton: View {
                     OpenBottomTab(radius: 8).stroke(T.border, lineWidth: 1)
                 }
             }
+            .background { if !selected && hover.on { RoundedRectangle(cornerRadius: 8).fill(T.faint) } }
             .contentShape(Rectangle())
         }.buttonStyle(.plain)
+        .onHover { h in withAnimation(Motion.quick) { hover.on = h } }
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 
@@ -225,6 +233,8 @@ struct QuestionView: View {
     @ObservedObject var call: CallModel
     let i: Int
     var compact = false
+    /// The zoom panel shows "Question n of m" in its own header.
+    var caption = true
 
     var question: Question { call.request.questions[i] }
     var multi: Bool { question.multiSelect ?? false }
@@ -233,16 +243,13 @@ struct QuestionView: View {
         GeometryReader { geo in
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    HStack {
-                        if !compact { Text("Question \(i + 1) of \(call.q.count)").foregroundColor(T.muted) }
-                        Spacer()
-                        LinkButton(title: "Clear answer") { call.clear(i) }
-                        HStack(spacing: 5) {
-                            Image(systemName: multi ? "checkmark.square" : "circle").font(.caption)
-                            Text(multi ? "Choose any · \(call.q[i].picked.count) selected" : "Choose one").font(.caption)
+                    if caption {
+                        ViewThatFits(in: .horizontal) {
+                            HStack { captionText; Spacer(); chips }
+                            VStack(alignment: .leading, spacing: 6) { captionText; HStack { chips; Spacer() } }
                         }
-                        .padding(.horizontal, 8).padding(.vertical, 3)
-                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(T.border))
+                    } else {
+                        HStack { Spacer(); chips }
                     }
                     let parts = question.question.split(separator: "\n", maxSplits: 1).map(String.init)
                     Text(parts.first ?? "").font(.title3.bold()).fixedSize(horizontal: false, vertical: true)
@@ -255,7 +262,7 @@ struct QuestionView: View {
                     }
                     OtherCard(call: call, i: i)
                     NoteBox(call: call, i: i)
-                }.padding(20)
+                }.padding(20).frame(maxWidth: 720).frame(maxWidth: .infinity)
             }
         }
         .focusable()
@@ -263,20 +270,46 @@ struct QuestionView: View {
         .onKeyPress(.downArrow) { move(1); return .handled }
         .onKeyPress(.upArrow) { move(-1); return .handled }
         .onKeyPress(.space) { toggleFocused() }
+        .onKeyPress(.return) { toggleFocused() }
+        .onKeyPress(characters: .decimalDigits, phases: .down) { press in
+            guard let n = Int(press.characters), n >= 1, n <= question.options.count + 1 else { return .ignored }
+            animate { call.select(i, n - 1) }
+            call.kbFocus[i] = n - 1
+            return .handled
+        }
+    }
+
+    var captionText: some View { Text("Question \(i + 1) of \(call.q.count)").foregroundColor(T.muted).fixedSize() }
+
+    var chips: some View {
+        HStack(spacing: 10) {
+            LinkButton(title: "Clear answer") { animate { call.clear(i) } }.fixedSize()
+            HStack(spacing: 5) {
+                Image(systemName: multi ? "checkmark.square" : "circle").font(.caption)
+                Text(multi ? "Choose any · \(call.q[i].picked.count) selected" : "Choose one").font(.caption)
+            }
+            .fixedSize()
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(T.border))
+        }
     }
 
     /// Single choice: arrows select and open the preview. Several: arrows move the focus, space ticks it (mock 3).
     func move(_ d: Int) {
         let n = question.options.count + 1
-        let cur = multi ? (call.q[i].previewOpen ?? -1) : (call.q[i].picked.first ?? -1)
+        let cur = call.kbFocus[i] ?? (multi ? -1 : (call.q[i].picked.first ?? -1))
         let next = min(max(cur + d, 0), n - 1)
-        if multi { call.q[i].previewOpen = next < question.options.count && question.options[next].preview != nil ? next : nil; call.kbFocus[i] = next }
-        else { call.select(i, next); call.kbFocus[i] = next }
+        animate {
+            if multi { call.q[i].previewOpen = next < question.options.count && question.options[next].preview != nil ? next : nil }
+            else { call.select(i, next) }
+        }
+        call.kbFocus[i] = next
     }
 
+    /// Space or Return ticks the focused choice; single choice already selected it on the arrow.
     func toggleFocused() -> KeyPress.Result {
-        guard multi, let f = call.kbFocus[i] else { return .ignored }
-        call.select(i, f)
+        guard let f = call.kbFocus[i] else { return .ignored }
+        if multi || !call.q[i].picked.contains(f) { animate { call.select(i, f) } }
         return .handled
     }
 }
@@ -303,6 +336,7 @@ struct OptionCard: View {
     let oi: Int
     var compact = false
     var maxPreview: CGFloat = 280
+    @StateObject private var hover = Flag()
 
     var body: some View {
         let o = call.request.questions[i].options[oi]
@@ -310,39 +344,69 @@ struct OptionCard: View {
         let on = call.q[i].picked.contains(oi)
         let open = call.q[i].previewOpen == oi
         let (label, recommended) = cleanLabel(o.label)
+        let focused = call.kbFocus[i] == oi
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 10) {
-                Button { call.select(i, oi) } label: { Marker(on: on, multi: multi) }.buttonStyle(.plain)
+                Button { pick() } label: { Marker(on: on, multi: multi) }.buttonStyle(.plain)
+                    .accessibilityLabel("\(oi + 1). \(label)\(recommended ? ", recommended" : "")")
+                    .accessibilityValue(on ? "selected" : "not selected")
+                    .accessibilityAddTraits(on ? .isSelected : [])
                 VStack(alignment: .leading, spacing: 3) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(label).fontWeight(.semibold).fixedSize(horizontal: false, vertical: true)
-                        if recommended { Chip(text: "Recommended").fixedSize() }
+                    ViewThatFits(in: .horizontal) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(label).fontWeight(.semibold).fixedSize()
+                            if recommended { Chip(text: "Recommended").fixedSize() }
+                        }
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(label).fontWeight(.semibold).fixedSize(horizontal: false, vertical: true)
+                            if recommended { Chip(text: "Recommended").fixedSize() }
+                        }
                     }
                     if let d = o.description, !d.isEmpty { Text(d).font(.callout).foregroundColor(T.muted) }
                 }
                 Spacer()
                 if o.preview != nil {
-                    Button { call.q[i].previewOpen = open ? nil : oi } label: {
+                    Button { animate { call.q[i].previewOpen = open ? nil : oi } } label: {
                         HStack(spacing: 4) { Image(systemName: "eye"); if !compact { Text("Preview") }; Image(systemName: open ? "chevron.up" : "chevron.down") }
                             .font(.callout).padding(.horizontal, 8).padding(.vertical, 4)
                             .overlay(RoundedRectangle(cornerRadius: 6).stroke(T.border))
+                            .hoverTint(6)
                     }.buttonStyle(.plain)
+                    .accessibilityLabel("\(open ? "Hide" : "Show") preview for \(label)")
+                    .help(open ? "Hide preview" : "Show preview")
                 }
             }.padding(12)
             if open, let p = o.preview {
-                Divider()
+                Rectangle().fill(T.border).frame(height: 1).mask(DashedRule())
                 Group {
                     if MD.isMockup(p) { VerbatimBlock(text: p).padding(12) }
                     else { ScrollView { MarkdownView(text: p).padding(12) } }
                 }.frame(maxHeight: max(120, maxPreview))
+                .transition(.opacity)
             }
         }
-        .background(RoundedRectangle(cornerRadius: 10).fill(on ? T.faint : Color.clear))
-        .overlay(RoundedRectangle(cornerRadius: 10)
-            .stroke(on ? T.ink : T.border, style: StrokeStyle(lineWidth: on ? 2 : 1, dash: open && !on ? [5, 3] : [])))
+        .background(RoundedRectangle(cornerRadius: 10).fill(on ? T.faint : hover.on ? T.ink.opacity(0.03) : Color.clear))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(on ? T.ink : hover.on ? T.ink.opacity(0.35) : T.border, lineWidth: on ? 2 : 1))
+        .overlay { if focused { RoundedRectangle(cornerRadius: 13).stroke(Color.accentColor.opacity(0.7), lineWidth: 3).padding(-3) } }
         .contentShape(Rectangle())
+        .onHover { h in withAnimation(Motion.quick) { hover.on = h } }
         .onTapGesture {
-            if multi { call.q[i].previewOpen = open ? nil : (o.preview != nil ? oi : nil) } else { call.select(i, oi) }
+            call.kbFocus[i] = nil
+            if multi { animate { call.q[i].previewOpen = open ? nil : (o.preview != nil ? oi : nil) } } else { pick() }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(label)\(o.description.map { ". " + $0 } ?? "")\(on ? ", selected" : "")")
+    }
+
+    func pick() { animate { call.select(i, oi) } }
+}
+
+/// A 1 pt dashed line: the rule between an option's header and its open preview (mock 3).
+struct DashedRule: View {
+    var body: some View {
+        GeometryReader { g in
+            Path { p in p.move(to: .zero); p.addLine(to: CGPoint(x: g.size.width, y: 0)) }
+                .stroke(style: StrokeStyle(lineWidth: 2, dash: [4, 3]))
         }
     }
 }
@@ -366,9 +430,13 @@ struct OtherCard: View {
             }
         }
         .padding(12)
+        .background(RoundedRectangle(cornerRadius: 10).fill(on ? T.faint : Color.clear))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(on ? T.ink : T.border, lineWidth: on ? 2 : 1))
+        .overlay { if call.kbFocus[i] == oi { RoundedRectangle(cornerRadius: 13).stroke(Color.accentColor.opacity(0.7), lineWidth: 3).padding(-3) } }
         .contentShape(Rectangle())
-        .onTapGesture { if !on { call.select(i, oi) } else if multi { call.select(i, oi) } }
+        .onTapGesture { call.kbFocus[i] = nil; if !on || multi { animate { call.select(i, oi) } } }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Something else\(on ? ", selected" : "")")
     }
 }
 
@@ -385,21 +453,19 @@ struct NoteBox: View {
             }
             AttachArea(call: call, key: "q\(i).note", text: Binding(get: { call.q[i].note }, set: { call.q[i].note = $0; call.noteTyped(i) }),
                        placeholder: "Anything the agent should know about this answer…", minHeight: 44)
-            Text("Paste an image with ⌘V").font(.caption).foregroundColor(T.muted)
             HStack(spacing: 10) {
+                if st.drafted { Chip(text: "✦ Drafted from your chat") }
+                else { Text("Paste an image with ⌘V").font(.caption).foregroundColor(T.muted) }
+                Spacer()
                 if st.drafting {
                     ProgressView().controlSize(.small)
                     Text("drafting…").foregroundColor(T.muted)
-                } else if !call.threads[i].isEmpty {
-                    if st.drafted {
-                        Chip(text: "✦ Drafted from your chat")
-                        if st.noteBackup != nil { LinkButton(title: "Undo") { call.undoDraft(i) } }
-                        LinkButton(title: "Draft again") { draft() }
-                    } else {
-                        LinkButton(title: "✦ Draft from discussion") { draft() }
-                    }
+                } else if st.drafted {
+                    if st.noteBackup != nil { LinkButton(title: "↩ Undo") { call.undoDraft(i) } }
+                    LinkButton(title: "✦ Draft again") { draft() }
+                } else {
+                    DraftLink(call: call, i: i) { draft() }
                 }
-                Spacer()
             }
             Text("The agent reads the note together with the answer, so it can add what a choice cannot say.")
                 .font(.callout).foregroundColor(T.muted)
@@ -412,5 +478,18 @@ struct NoteBox: View {
         if call.q[i].note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !call.q[i].noteEdited || confirmReplaceNote() {
             call.draftNote(i)
         }
+    }
+}
+
+/// Always shown (mocks 1, 5, 7); greyed out until there is a chat about the question to draft from.
+struct DraftLink: View {
+    @ObservedObject var call: CallModel
+    let i: Int
+    let action: () -> Void
+    var body: some View {
+        let empty = call.threads[i].isEmpty
+        LinkButton(title: "✦ Draft from discussion", action: action)
+            .disabled(empty || !call.live).opacity(empty ? 0.45 : 1)
+            .help(empty ? "Ask about this question in the chat first, then draft the note from it" : "Write the note from your chat about this question")
     }
 }

@@ -73,6 +73,8 @@ struct ChatPane: View {
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(T.border))
         }
         .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+        .accessibilityLabel("Model and effort: \(Prefs.modelName(prefs.model)), \(prefs.effort) effort")
+        .help("Model and effort for the assistant")
     }
 
     var messages: some View {

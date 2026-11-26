@@ -61,7 +61,7 @@ final class CallModel: ObservableObject, Identifiable {
     @Published var attachments: [String: [Attachment]] = [:]
     @Published var pastes: [String: [PastedText]] = [:]
     @Published var unread = 0
-    var kbFocus: [Int: Int] = [:]
+    @Published var kbFocus: [Int: Int] = [:]
     @Published var bigImage: String?
     private var dirPath: String?
     private var agent: SideAgent?

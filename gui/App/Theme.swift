@@ -19,27 +19,33 @@ struct Chip: View {
 
 struct PrimaryButton: View {
     let title: String
+    var icon: String? = nil
     var enabled = true
+    var shortcut: KeyboardShortcut? = nil
     let action: () -> Void
+    @StateObject private var hover = Flag()
     var body: some View {
         Button(action: action) {
-            Text(title).fontWeight(.semibold)
+            HStack(spacing: 6) { if let i = icon { Image(systemName: i) }; Text(title) }.fontWeight(.semibold)
                 .padding(.horizontal, 16).padding(.vertical, 8)
                 .foregroundColor(T.inkText)
-                .background(RoundedRectangle(cornerRadius: 8).fill(T.ink.opacity(enabled ? 1 : 0.35)))
-        }.buttonStyle(.plain).disabled(!enabled)
+                .background(RoundedRectangle(cornerRadius: 8).fill(T.ink.opacity(enabled ? (hover.on ? 0.82 : 1) : 0.35)))
+        }.buttonStyle(.plain).disabled(!enabled).keyboardShortcut(shortcut)
+        .onHover { h in withAnimation(Motion.quick) { hover.on = h } }
     }
 }
 
 struct OutlineButton: View {
     let title: String
     var icon: String? = nil
+    var shortcut: KeyboardShortcut? = nil
     let action: () -> Void
     var body: some View {
         Button(action: action) {
             HStack(spacing: 6) { if let i = icon { Image(systemName: i) }; Text(title) }.padding(.horizontal, 12).padding(.vertical, 7)
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(T.border))
-        }.buttonStyle(.plain)
+                .hoverTint()
+        }.buttonStyle(.plain).keyboardShortcut(shortcut)
     }
 }
 
@@ -247,4 +253,26 @@ struct ClockBadge: View {
             Text(text).font(.callout.monospacedDigit())
         }
     }
+}
+
+/// Short UI motion that turns off with Reduce Motion; the divider drag never goes through it.
+enum Motion {
+    static var quick: Animation? { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : .snappy(duration: 0.18) }
+}
+
+func animate(_ change: () -> Void) { withAnimation(Motion.quick, change) }
+
+/// Hover tint for anything clickable; a StateObject so a parent redraw does not reset it.
+struct HoverTint: ViewModifier {
+    var radius: CGFloat = 8
+    @StateObject private var hover = Flag()
+    func body(content: Content) -> some View {
+        content
+            .background(RoundedRectangle(cornerRadius: radius).fill(T.ink.opacity(hover.on ? 0.05 : 0)))
+            .onHover { h in withAnimation(Motion.quick) { hover.on = h } }
+    }
+}
+
+extension View {
+    func hoverTint(_ radius: CGFloat = 8) -> some View { modifier(HoverTint(radius: radius)) }
 }

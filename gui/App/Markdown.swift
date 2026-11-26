@@ -170,13 +170,15 @@ struct MarkdownView: View {
     }
 }
 
+/// Copy sits in its own top band, shown on hover, so it never covers the first line of code.
 struct CodeBlock: View {
     let code: String
+    @StateObject private var hover = Flag()
     var body: some View {
         ZStack(alignment: .topTrailing) {
             ScrollView(.horizontal, showsIndicators: false) {
-                Text(code).font(.system(.callout, design: .monospaced)).fixedSize()
-                    .padding(.horizontal, 12).padding(.vertical, 10).padding(.trailing, 56)
+                Text(code).font(.system(.callout, design: .monospaced)).fixedSize().textSelection(.enabled)
+                    .padding(.horizontal, 12).padding(.top, 28).padding(.bottom, 10)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             Button {
@@ -187,9 +189,12 @@ struct CodeBlock: View {
                     .font(.caption).padding(.horizontal, 8).padding(.vertical, 3)
                     .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(T.border))
-            }.buttonStyle(.plain).padding(6)
+            }.buttonStyle(.plain).padding(4)
+            .opacity(hover.on ? 1 : 0)
+            .accessibilityLabel("Copy code")
         }
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.07)))
+        .onHover { h in withAnimation(Motion.quick) { hover.on = h } }
     }
 }
 

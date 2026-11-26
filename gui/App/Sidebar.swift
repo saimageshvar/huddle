@@ -14,7 +14,7 @@ struct RootView: View {
                     Text("Listening in the menu bar").foregroundColor(T.muted).frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            if let c = store.current, c.sendBackOpen { SendBackSheet(store: store, call: c) }
+            if let c = store.current { SendBackLayer(store: store, call: c) }
         }
     }
 }
