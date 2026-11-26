@@ -66,7 +66,8 @@ final class PlaceholderTextView: NSTextView {
     /// An image on the pasteboard becomes an attachment; anything with text in it pastes as text.
     override func paste(_ sender: Any?) {
         let pb = NSPasteboard.general
-        if onPasteImage != nil, pb.string(forType: .string) == nil, let data = Self.pngData(pb) {
+        let text = pb.string(forType: .string)
+        if onPasteImage != nil, text == nil || !text!.contains("\n"), let data = Self.pngData(pb) {
             onPasteImage?(data)
             return
         }
@@ -75,6 +76,11 @@ final class PlaceholderTextView: NSTextView {
             return
         }
         super.paste(sender)
+    }
+
+    /// Without these, a plain-text view disables Paste (and cmd-V) for an image-only pasteboard, so paste() never runs.
+    override var readablePasteboardTypes: [NSPasteboard.PasteboardType] {
+        onPasteImage == nil ? super.readablePasteboardTypes : super.readablePasteboardTypes + [.png, .tiff, .fileURL]
     }
 
     static func pngData(_ pb: NSPasteboard) -> Data? {
