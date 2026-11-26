@@ -144,9 +144,16 @@ func finish(dir string, rawInput json.RawMessage) {
 	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"hookSpecificOutput": out})
 }
 
-// wantsGUI is true for HUDDLE_UI=gui, or for a session listed in ~/.huddle/gui-sessions.
+// wantsGUI: HUDDLE_UI (gui|tui) wins, then a session listed in ~/.huddle/gui-sessions, then the machine default in ~/.huddle/ui.
 func wantsGUI(sid string) bool {
-	return os.Getenv("HUDDLE_UI") == "gui" || (sid != "" && exists(filepath.Join(huddleHome(), "gui-sessions", sid)))
+	if v := os.Getenv("HUDDLE_UI"); v != "" {
+		return v == "gui"
+	}
+	if sid != "" && exists(filepath.Join(huddleHome(), "gui-sessions", sid)) {
+		return true
+	}
+	b, _ := os.ReadFile(filepath.Join(huddleHome(), "ui"))
+	return strings.TrimSpace(string(b)) == "gui"
 }
 
 // runGUIHook hands the call to the Swift hook helper linked at ~/.huddle/gui-hook; false means it is missing, so the TUI carries on.
