@@ -86,6 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         store.onEmpty = { [weak self] in self?.window.orderOut(nil); NSApp.setActivationPolicy(.accessory) }
         LayoutState.shared.$zoomed.sink { [weak self] z in self?.window.title = z ? "Huddle · chat zoomed" : "Huddle" }.store(in: &bag)
         refreshStatus()
+        if !CommandLine.arguments.contains("--quiet") { DispatchQueue.main.async { [weak self] in self?.openWindow() } }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in (self?.mainlineKey(e) ?? false) ? nil : e }
         installEditMenu()
         pruneCalls()

@@ -88,7 +88,7 @@ func launchApp() {
     let app = exe.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-    p.arguments = ["-g", app.path]
+    p.arguments = ["-g", app.path, "--args", "--quiet"]
     try? p.run()
 }
 
