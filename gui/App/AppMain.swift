@@ -14,10 +14,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func mainlineKey(_ e: NSEvent) -> Bool {
         guard e.window === window, window.isKeyWindow, window.attachedSheet == nil,
               e.modifierFlags.intersection([.command, .option, .control]).isEmpty,
-              let call = store.current, !call.sendBackOpen, call.tab < call.q.count else { return false }
+              let call = store.current, !call.sendBackOpen else { return false }
         let field = window.firstResponder as? PlaceholderTextView
         if window.firstResponder is NSTextView && field == nil { return false }
         func chat() -> PlaceholderTextView? { Self.field("q\(call.tab).chat", in: window.contentView) }
+        if e.keyCode == 123 || e.keyCode == 124 {
+            if window.firstResponder is NSTextView { return false }
+            let t = min(max(call.tab + (e.keyCode == 124 ? 1 : -1), 0), call.q.count)
+            if t != call.tab { animate { call.tab = t } }
+            return true
+        }
+        guard call.tab < call.q.count else { return false }
         switch e.keyCode {
         case 48:
             if let f = field {
@@ -73,9 +80,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         store.onChange = { [weak self] in self?.refreshStatus() }
         store.onArrival = { [weak self] in
             NSSound(named: "Glass")?.play()
+            NSApp.setActivationPolicy(.regular)
             self?.window.orderFrontRegardless()
         }
-        store.onEmpty = { [weak self] in self?.window.orderOut(nil) }
+        store.onEmpty = { [weak self] in self?.window.orderOut(nil); NSApp.setActivationPolicy(.accessory) }
         LayoutState.shared.$zoomed.sink { [weak self] z in self?.window.title = z ? "Huddle · chat zoomed" : "Huddle" }.store(in: &bag)
         refreshStatus()
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in (self?.mainlineKey(e) ?? false) ? nil : e }
@@ -120,7 +128,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return true
     }
 
-    func windowShouldClose(_ sender: NSWindow) -> Bool { sender.orderOut(nil); return false }
+    func windowShouldClose(_ sender: NSWindow) -> Bool { sender.orderOut(nil); NSApp.setActivationPolicy(.accessory); return false }
 
     func applicationWillTerminate(_ n: Notification) { store.quitAll(); unlink(socketPath) }
 
@@ -188,6 +196,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc func openWindow() {
+        NSApp.setActivationPolicy(.regular)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }

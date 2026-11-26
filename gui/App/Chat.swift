@@ -267,7 +267,7 @@ struct ModelPicker: View {
                             prefs.model = st.hot; prefs.effort = e; st.open = false
                         } hover: { _ in }
                     }
-                }.frame(width: 96)
+                }.frame(width: 118)
             }
             Text("Applies from your next message").font(.caption).foregroundColor(T.muted).padding(.horizontal, 10)
         }.padding(8).fixedSize()
@@ -287,7 +287,7 @@ struct PickerRow: View {
         Button(action: action) {
             HStack(spacing: 6) {
                 Image(systemName: "checkmark").font(.caption.weight(.semibold)).opacity(checked ? 1 : 0).frame(width: 12)
-                Text(title)
+                Text(title).lineLimit(1).fixedSize()
                 Spacer(minLength: 8)
                 if chevron { Image(systemName: "chevron.right").font(.caption2).foregroundColor(T.muted) }
             }
