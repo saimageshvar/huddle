@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 import Combine
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
     let store = Store()
     var window: NSWindow!
     var server: SocketServer!
@@ -178,15 +178,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         head.isEnabled = false
         menu.addItem(head)
         for c in store.calls {
-            let left = store.remaining(c)
-            let t: String
-            switch c.state {
-            case .expired: t = "Expired"
-            case .cancelled: t = "Cancelled"
-            default: t = (left < 300 ? "▲ " : "") + clock(left)
-            }
             let item = NSMenuItem(title: c.sessionName, action: #selector(pick(_:)), keyEquivalent: "")
-            item.attributedTitle = rowTitle(c.sessionName, t, dimRight: false)
+            item.attributedTitle = rowTitle(c.sessionName, callTime(c), dimRight: false)
             item.target = self
             item.representedObject = c.id
             menu.addItem(item)
@@ -198,7 +191,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let quit = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quit.attributedTitle = rowTitle("Quit", "")
         menu.addItem(quit)
+        menu.delegate = self
         status.menu = menu
+    }
+
+    func callTime(_ c: CallModel) -> String {
+        switch c.state {
+        case .expired: return "Expired"
+        case .cancelled: return "Cancelled"
+        default:
+            let left = store.remaining(c)
+            return (left < 300 ? "▲ " : "") + clock(left)
+        }
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        for item in menu.items {
+            guard let id = item.representedObject as? UUID, let c = store.calls.first(where: { $0.id == id }) else { continue }
+            item.attributedTitle = rowTitle(c.sessionName, callTime(c), dimRight: false)
+        }
     }
 
     @objc func pick(_ s: NSMenuItem) {

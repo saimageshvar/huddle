@@ -19,14 +19,16 @@ struct Rail: View {
 struct Tile: View {
     @ObservedObject var store: Store
     @ObservedObject var call: CallModel
-    @ObservedObject var hover = Flag()
+    @StateObject private var hover = Flag()
     var body: some View {
         let selected = store.selected == call.id
-        let left = store.remaining(call)
-        let sub: String = call.state == .expired ? "Expired" : call.state == .cancelled ? "Cancelled" : (left < 300 ? "▲ " : "") + clock(left)
         VStack(spacing: 2) {
-            Text(String(call.sessionName.prefix(1)).uppercased()).font(.title3.bold())
-            Text(sub).font(.system(size: 10).monospacedDigit())
+            Text(String(call.sessionName.prefix(2)).capitalized).font(.title3.bold())
+            Tick {
+                let left = store.remaining(call)
+                Text(call.state == .expired ? "Expired" : call.state == .cancelled ? "Cancelled" : (left < 300 ? "▲ " : "") + clock(left))
+                    .font(.system(size: 10).monospacedDigit())
+            }
         }
         .frame(width: 48, height: 52)
         .foregroundColor(call.live ? T.ink : T.muted)
@@ -40,8 +42,7 @@ struct Tile: View {
             if hover.on {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(call.sessionName).fontWeight(.semibold)
-                    Text("\(call.repo) · \(call.request.branch) · \(call.shortId)")
-                    Text("Hover or focus a tile for its identity.").foregroundColor(.white.opacity(0.6))
+                    Text(call.request.branch.isEmpty ? "\(call.repo) · \(call.shortId)" : "\(call.repo) · \(call.request.branch) · \(call.shortId)")
                 }
                 .font(.callout).padding(10).fixedSize()
                 .foregroundColor(.white).background(RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.88)))

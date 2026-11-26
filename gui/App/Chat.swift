@@ -101,7 +101,7 @@ func hhmm(_ d: Date) -> String {
 struct PasteChip: View {
     let paste: PastedText
     var onRemove: (() -> Void)? = nil
-    @ObservedObject var open: Flag
+    @StateObject private var open = Flag()
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
@@ -120,6 +120,21 @@ struct PasteChip: View {
             }
         }
     }
+}
+
+struct ChatPick { let q: Int; let options: [Int] }
+
+/// Splits a trailing `PICK: Qn a,b` line off an assistant reply; the line is also hidden while it is still streaming in.
+func splitPick(_ text: String, call: CallModel) -> (String, ChatPick?) {
+    var lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+    while lines.last?.trimmingCharacters(in: .whitespaces).isEmpty == true { lines.removeLast() }
+    guard let last = lines.last, last.uppercased().hasPrefix("PICK:") else { return (text, nil) }
+    let body = lines.dropLast().joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    let parts = last.dropFirst(5).split(separator: " ", omittingEmptySubsequences: true)
+    guard parts.count == 2, parts[0].uppercased().hasPrefix("Q"), let n = Int(parts[0].dropFirst()), (1...call.q.count).contains(n) else { return (body, nil) }
+    let count = call.request.questions[n - 1].options.count
+    let idx = parts[1].split(separator: ",").compactMap { $0.lowercased().unicodeScalars.first.map { Int($0.value) - 97 } }.filter { (0..<count).contains($0) }
+    return (body, idx.isEmpty ? nil : ChatPick(q: n - 1, options: idx))
 }
 
 struct MsgView: View {
@@ -145,7 +160,7 @@ struct MsgView: View {
                         }
                     }
                     if !msg.text.isEmpty { Text(msg.text).textSelection(.enabled) }
-                    ForEach(msg.pasted) { p in PasteChip(paste: p, open: Flag()).colorScheme(.dark) }
+                    ForEach(msg.pasted) { p in PasteChip(paste: p).colorScheme(.dark) }
                 }
                 .padding(.horizontal, 14).padding(.vertical, 10)
                 .foregroundColor(T.inkText)
@@ -157,25 +172,27 @@ struct MsgView: View {
     }
 
     var theirs: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        let (shown, pick) = splitPick(msg.text, call: call)
+        return VStack(alignment: .leading, spacing: 4) {
             Text(msg.live ? "Assistant · writing…" : "Assistant · \(hhmm(msg.time))").font(.caption).foregroundColor(T.muted)
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "sparkle").frame(width: 28, height: 28).overlay(Circle().stroke(T.border))
                 VStack(alignment: .leading, spacing: 6) {
-                    bubble
+                    bubble(shown)
                     if !msg.live && !msg.failed && !msg.text.isEmpty {
                         HStack(spacing: 8) {
                             small("Copy", "doc.on.doc") {
                                 NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(msg.text, forType: .string)
+                                NSPasteboard.general.setString(shown, forType: .string)
                             }
                             if call.live {
                                 small("Add to note", "square.and.pencil") {
                                     let n = call.q[i].note
-                                    call.q[i].note = n.isEmpty ? msg.text : n + "\n" + msg.text
+                                    call.q[i].note = n.isEmpty ? shown : n + "\n" + shown
                                     call.noteTyped(i)
                                 }
                             }
+                            if call.live, let p = pick { pickButton(p) }
                         }
                     }
                 }
@@ -184,16 +201,34 @@ struct MsgView: View {
         }
     }
 
-    @ViewBuilder var bubble: some View {
+    @ViewBuilder func pickButton(_ p: ChatPick) -> some View {
+        let qs = call.request.questions[p.q]
+        let names = p.options.map { cleanLabel(qs.options[$0].label).0 }.joined(separator: ", ")
+        let done = Set(p.options).isSubset(of: call.q[p.q].picked)
+        Button {
+            call.kbFocus[p.q] = nil
+            animate {
+                for o in p.options where !call.q[p.q].picked.contains(o) { call.select(p.q, o) }
+                if p.q != call.tab { call.tab = p.q }
+            }
+        } label: {
+            HStack(spacing: 4) { Image(systemName: done ? "checkmark" : "checkmark.circle"); Text(done ? "Selected: \(names)" : "Select \(names)").lineLimit(1) }
+                .font(.caption.weight(.semibold)).padding(.horizontal, 8).padding(.vertical, 3)
+                .foregroundColor(.accentColor)
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.accentColor.opacity(0.6)))
+        }.buttonStyle(.plain).disabled(done)
+    }
+
+    @ViewBuilder func bubble(_ shown: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            if msg.text.isEmpty {
+            if shown.isEmpty {
                 Text(msg.tool ?? "Thinking…").italic().foregroundColor(T.muted)
             } else if msg.failed {
                 Text(msg.text).foregroundColor(.red)
             } else {
-                MarkdownView(text: msg.text)
+                MarkdownView(text: shown)
             }
-            if msg.live && !msg.text.isEmpty {
+            if msg.live && !shown.isEmpty {
                 TimelineView(.periodic(from: .now, by: 0.5)) { ctx in
                     Text("▌").opacity(Int(ctx.date.timeIntervalSince1970 * 2) % 2 == 0 ? 1 : 0.1)
                 }

@@ -39,7 +39,7 @@ final class Flag: ObservableObject {
 struct SplitHandle: View {
     @ObservedObject var layout = LayoutState.shared
     let total: CGFloat
-    @ObservedObject var hover = Flag()
+    @StateObject private var hover = Flag()
 
     var body: some View {
         ZStack {

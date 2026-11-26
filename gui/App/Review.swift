@@ -106,11 +106,13 @@ struct SendBackSheet: View {
                 ForEach(0..<call.q.count, id: \.self) { i in row(i) }
             }
             Text("Your answers to the other questions go back too, so the agent can keep them.").foregroundColor(T.muted)
+            let response = call.sendBackResponse()
             HStack(spacing: 10) {
+                if response == nil { Text("Add a reason to send back").foregroundColor(T.muted) }
                 Spacer()
                 OutlineButton(title: "Cancel", shortcut: .cancelAction) { animate { call.sendBackOpen = false } }
-                PrimaryButton(title: "Send back", icon: "arrow.uturn.left", enabled: call.sendBackResponse() != nil) {
-                    if let r = call.sendBackResponse() { store.respond(call, r) }
+                PrimaryButton(title: "Send back", icon: "arrow.uturn.left", enabled: response != nil, shortcut: .init(.return, modifiers: .command)) {
+                    if let r = response { store.respond(call, r) }
                 }
             }
         }
@@ -136,7 +138,7 @@ struct SendBackSheet: View {
         .accessibilityAddTraits(on ? .isSelected : [])
         if on {
             VStack(alignment: .leading, spacing: 6) {
-                BoxedTextArea(text: $call.q[i].reason, placeholder: "What is wrong with the question?", minHeight: 64)
+                BoxedTextArea(text: $call.q[i].reason, placeholder: "What is wrong with the question?", minHeight: 64, autofocus: true)
                 if call.q[i].drafting { Text("drafting…").foregroundColor(T.muted) }
                 else if !call.threads[i].isEmpty { LinkButton(title: "✦ Draft from my discussion") { call.draftReason(i) } }
             }.padding(.leading, 32).transition(.opacity)

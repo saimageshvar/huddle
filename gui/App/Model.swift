@@ -318,10 +318,22 @@ final class CallModel: ObservableObject, Identifiable {
     }
 }
 
+/// The clock lives apart from Store so a tick redraws only the views that show a countdown.
+final class Ticker: ObservableObject {
+    static let shared = Ticker()
+    @Published var now = Date()
+}
+
+struct Tick<Content: View>: View {
+    @ObservedObject private var ticker = Ticker.shared
+    @ViewBuilder let content: () -> Content
+    var body: some View { _ = ticker.now; return content() }
+}
+
 final class Store: ObservableObject {
     @Published var calls: [CallModel] = []
     @Published var selected: UUID?
-    @Published var now = Date()
+    var now = Date()
     var onChange: (() -> Void)?
     var onArrival: (() -> Void)?
     var onEmpty: (() -> Void)?
@@ -375,8 +387,10 @@ final class Store: ObservableObject {
 
     private func tick() {
         now = Date()
-        for c in calls where c.live && now >= c.deadline { c.state = .expired; c.stopAgent() }
-        onChange?()
+        Ticker.shared.now = now
+        var expired = false
+        for c in calls where c.live && now >= c.deadline { c.state = .expired; c.stopAgent(); expired = true }
+        if expired { onChange?() }
     }
 
     func remaining(_ c: CallModel) -> TimeInterval { max(0, c.deadline.timeIntervalSince(now)) }

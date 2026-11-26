@@ -60,6 +60,8 @@ func agentPrompt(_ req: Request) -> String {
     \(qs)
     Each user message starts with a tag such as [Q2: Header] naming the question it is about. Stay on that question unless the user names another one; then answer about that one by its number. Write in plain, direct words with short paragraphs; use Markdown (lists, tables, code) when it helps. Say what you recommend when asked, with the reason.
 
+    When you recommend which option to choose for a question, end that reply with one final line `PICK: Qn a` naming the question number and the option letter (for a multi-select question, letters separated by commas, like `PICK: Q2 a,c`). Add it only when you give a clear recommendation, never otherwise.
+
     Two special requests. Answer each with the text only: no tools, no preamble, no heading.
     - [DRAFT NOTE Qn] (user's current answer: ...): write 1-5 short plain-text lines to the main agent, giving only what the user themselves said or agreed to about question n: their reasoning, constraints and decisions. Leave out your own suggestions the user did not accept, and do not restate or contradict the chosen answer. If there is nothing worth passing on, reply with the single word NONE.
     - [DRAFT REASON Qn]: write 1-5 lines to the main agent saying why question n is wrong or should be asked differently, using only objections the user raised. If the user raised none, reply with the single word NONE.

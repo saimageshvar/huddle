@@ -86,8 +86,7 @@ struct InboxRow: View {
         case .expired: Text("Expired").font(.callout).foregroundColor(T.muted)
         case .cancelled: Text("Cancelled").font(.callout).foregroundColor(T.muted)
         default:
-            let left = store.remaining(call)
-            ClockBadge(text: clock(left), warn: left < 300)
+            Tick { ClockBadge(text: clock(store.remaining(call)), warn: store.remaining(call) < 300) }
         }
     }
 }

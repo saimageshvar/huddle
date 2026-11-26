@@ -125,6 +125,7 @@ struct TextArea: NSViewRepresentable {
     var onPasteImage: ((Data) -> Void)? = nil
     var onPasteLongText: ((String) -> Void)? = nil
     var key = ""
+    var autofocus = false
     static let inset = NSSize(width: 10, height: 9)
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -148,6 +149,7 @@ struct TextArea: NSViewRepresentable {
         tv.onPasteImage = onPasteImage
         tv.onPasteLongText = onPasteLongText
         tv.string = text
+        if autofocus { DispatchQueue.main.async { [weak tv] in tv?.window?.makeFirstResponder(tv) } }
         let sv = NSScrollView()
         sv.drawsBackground = false
         sv.hasVerticalScroller = false
@@ -199,8 +201,9 @@ struct BoxedTextArea: View {
     var minHeight: CGFloat = 60
     var submitOnEnter = false
     var onSubmit: (() -> Void)? = nil
+    var autofocus = false
     var body: some View {
-        TextArea(text: $text, placeholder: placeholder, minHeight: minHeight, submitOnEnter: submitOnEnter, onSubmit: onSubmit)
+        TextArea(text: $text, placeholder: placeholder, minHeight: minHeight, submitOnEnter: submitOnEnter, onSubmit: onSubmit, autofocus: autofocus)
             .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(T.border))
     }
@@ -241,7 +244,7 @@ struct AttachArea: View {
             }
             if !pastes.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    ForEach(pastes) { p in PasteChip(paste: p, onRemove: { call.pastes[key]?.removeAll { $0.id == p.id } }, open: Flag()) }
+                    ForEach(pastes) { p in PasteChip(paste: p, onRemove: { call.pastes[key]?.removeAll { $0.id == p.id } }) }
                 }.padding(.horizontal, 10).padding(.top, 10)
             }
             TextArea(text: $text, placeholder: placeholder, minHeight: minHeight, maxHeight: maxHeight, submitOnEnter: submitOnEnter, onSubmit: onSubmit,
