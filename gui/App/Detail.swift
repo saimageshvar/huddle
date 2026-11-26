@@ -265,18 +265,7 @@ struct QuestionView: View {
                 }.padding(20).frame(maxWidth: 720).frame(maxWidth: .infinity)
             }
         }
-        .focusable()
-        .focusEffectDisabled()
-        .onKeyPress(.downArrow) { move(1); return .handled }
-        .onKeyPress(.upArrow) { move(-1); return .handled }
-        .onKeyPress(.space) { toggleFocused() }
-        .onKeyPress(.return) { toggleFocused() }
-        .onKeyPress(characters: .decimalDigits, phases: .down) { press in
-            guard let n = Int(press.characters), n >= 1, n <= question.options.count + 1 else { return .ignored }
-            animate { call.select(i, n - 1) }
-            call.kbFocus[i] = n - 1
-            return .handled
-        }
+        .onAppear { call.keyHandlers[i] = handleKey }
     }
 
     var captionText: some View { Text("Question \(i + 1) of \(call.q.count)").foregroundColor(T.muted).fixedSize() }
@@ -294,23 +283,24 @@ struct QuestionView: View {
         }
     }
 
-    /// Single choice: arrows select and open the preview. Several: arrows move the focus, space ticks it (mock 3).
-    func move(_ d: Int) {
+    /// Up/Down move the focus ring (and open that choice's preview); Space ticks or clears the focused choice.
+    func handleKey(_ k: String) -> Bool {
         let n = question.options.count + 1
-        let cur = call.kbFocus[i] ?? (multi ? -1 : (call.q[i].picked.first ?? -1))
-        let next = min(max(cur + d, 0), n - 1)
-        animate {
-            if multi { call.q[i].previewOpen = next < question.options.count && question.options[next].preview != nil ? next : nil }
-            else { call.select(i, next) }
+        switch k {
+        case "up", "down":
+            let cur = call.kbFocus[i] ?? call.q[i].picked.first ?? -1
+            let next = min(max(cur + (k == "down" ? 1 : -1), 0), n - 1)
+            animate { call.q[i].previewOpen = next < question.options.count && question.options[next].preview != nil ? next : nil }
+            call.kbFocus[i] = next
+            return true
+        case "space":
+            guard let f = call.kbFocus[i] else { return false }
+            animate {
+                if !multi && call.q[i].picked.contains(f) { call.clear(i) } else { call.select(i, f) }
+            }
+            return true
+        default: return false
         }
-        call.kbFocus[i] = next
-    }
-
-    /// Space or Return ticks the focused choice; single choice already selected it on the arrow.
-    func toggleFocused() -> KeyPress.Result {
-        guard let f = call.kbFocus[i] else { return .ignored }
-        if multi || !call.q[i].picked.contains(f) { animate { call.select(i, f) } }
-        return .handled
     }
 }
 

@@ -66,6 +66,7 @@ struct Attachment: Identifiable {
 
 final class PlaceholderTextView: NSTextView {
     var placeholder = ""
+    var key = ""
     var onPasteImage: ((Data) -> Void)?
     var onPasteLongText: ((String) -> Void)?
 
@@ -116,6 +117,7 @@ struct TextArea: NSViewRepresentable {
     var onSubmit: (() -> Void)? = nil
     var onPasteImage: ((Data) -> Void)? = nil
     var onPasteLongText: ((String) -> Void)? = nil
+    var key = ""
     static let inset = NSSize(width: 10, height: 9)
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -135,6 +137,7 @@ struct TextArea: NSViewRepresentable {
         tv.isVerticallyResizable = true
         tv.autoresizingMask = [.width]
         tv.placeholder = placeholder
+        tv.key = key
         tv.onPasteImage = onPasteImage
         tv.onPasteLongText = onPasteLongText
         tv.string = text
@@ -236,7 +239,8 @@ struct AttachArea: View {
             }
             TextArea(text: $text, placeholder: placeholder, minHeight: minHeight, maxHeight: maxHeight, submitOnEnter: submitOnEnter, onSubmit: onSubmit,
                      onPasteImage: { call.addImage($0, key) },
-                     onPasteLongText: key.hasSuffix(".chat") ? { call.pastes[key, default: []].append(PastedText(text: $0)) } : nil)
+                     onPasteLongText: key.hasSuffix(".chat") ? { call.pastes[key, default: []].append(PastedText(text: $0)) } : nil,
+                     key: key)
         }
         .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(T.border))

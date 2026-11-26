@@ -8,6 +8,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var server: SocketServer!
     var status: NSStatusItem!
     var bag = Set<AnyCancellable>()
+    var keyMonitor: Any?
+
+    /// Up/Down/Space drive the choices and Tab flips between the question pane and the chat box, with no click needed first.
+    func mainlineKey(_ e: NSEvent) -> Bool {
+        guard e.window === window, window.isKeyWindow, window.attachedSheet == nil,
+              e.modifierFlags.intersection([.command, .option, .control]).isEmpty,
+              let call = store.current, !call.sendBackOpen, call.tab < call.q.count else { return false }
+        let field = window.firstResponder as? PlaceholderTextView
+        if window.firstResponder is NSTextView && field == nil { return false }
+        func chat() -> PlaceholderTextView? { Self.field("q\(call.tab).chat", in: window.contentView) }
+        switch e.keyCode {
+        case 48:
+            if let f = field {
+                if f.key.hasSuffix(".chat") { window.makeFirstResponder(window.contentView); return true }
+                if f.key.hasPrefix("q"), let c = chat() { window.makeFirstResponder(c); return true }
+                return false
+            }
+            guard let c = chat() else { return false }
+            window.makeFirstResponder(c)
+            return true
+        case 126, 125, 49:
+            if field != nil { return false }
+            return call.keyHandlers[call.tab]?(e.keyCode == 126 ? "up" : e.keyCode == 125 ? "down" : "space") ?? false
+        default: return false
+        }
+    }
+
+    static func field(_ key: String, in v: NSView?) -> PlaceholderTextView? {
+        guard let v else { return nil }
+        if let t = v as? PlaceholderTextView, t.key == key { return t }
+        for s in v.subviews { if let t = field(key, in: s) { return t } }
+        return nil
+    }
 
     func applicationDidFinishLaunching(_ n: Notification) {
         signal(SIGPIPE, SIG_IGN)
@@ -38,6 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         store.onEmpty = { [weak self] in self?.window.orderOut(nil) }
         LayoutState.shared.$zoomed.sink { [weak self] z in self?.window.title = z ? "Huddle · chat zoomed" : "Huddle" }.store(in: &bag)
         refreshStatus()
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in (self?.mainlineKey(e) ?? false) ? nil : e }
         installEditMenu()
         pruneCalls()
     }
