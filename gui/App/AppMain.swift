@@ -43,7 +43,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             let k = e.keyCode == 126 ? "up" : e.keyCode == 125 ? "down" : "space"
             if call.keyHandlers[call.tab]?(k) == true { return true }
-            if k == "down", let n = Self.field("q\(call.tab).note", in: window.contentView) { window.makeFirstResponder(n); return true }
+            if k == "down" {
+                if let n = Self.field("q\(call.tab).note", in: window.contentView) { window.makeFirstResponder(n); return true }
+                if call.live {
+                    call.noteOpen.insert(call.tab)
+                    let tab = call.tab
+                    DispatchQueue.main.async { [window] in if let w = window, let n = Self.field("q\(tab).note", in: w.contentView) { w.makeFirstResponder(n) } }
+                    return true
+                }
+            }
             return false
         default: return false
         }

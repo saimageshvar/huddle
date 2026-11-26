@@ -62,6 +62,7 @@ final class CallModel: ObservableObject, Identifiable {
     @Published var pastes: [String: [PastedText]] = [:]
     @Published var unread = 0
     @Published var kbFocus: [Int: Int] = [:]
+    @Published var noteOpen: Set<Int> = []
     var keyHandlers: [Int: (String) -> Bool] = [:]
     @Published var bigImage: String?
     private var dirPath: String?

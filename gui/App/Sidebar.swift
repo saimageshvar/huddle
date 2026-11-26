@@ -11,7 +11,11 @@ struct RootView: View {
                 if let c = store.current {
                     DetailView(store: store, call: c).id(c.id)
                 } else {
-                    Text("Listening in the menu bar").foregroundColor(T.muted).frame(maxWidth: .infinity, maxHeight: .infinity)
+                    VStack(spacing: 10) {
+                        Image(systemName: "tray").font(.system(size: 34, weight: .light))
+                        Text("Nothing waiting").font(.title3).fontWeight(.medium).foregroundColor(T.ink)
+                        Text("Questions from your Claude sessions land here.")
+                    }.foregroundColor(T.muted).frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
             if let c = store.current { SendBackLayer(store: store, call: c) }

@@ -22,8 +22,11 @@ struct DetailView: View {
             if let f = call.flash {
                 VStack { Spacer(); Text(f).padding(.horizontal, 14).padding(.vertical, 8)
                     .foregroundColor(T.inkText).background(RoundedRectangle(cornerRadius: 8).fill(T.ink)).padding(.bottom, 70) }
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .onAppear { NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested, userInfo: [.announcement: f]) }
             }
         }
+        .animation(Motion.quick, value: call.flash)
     }
 
     var normalBody: some View {
@@ -315,6 +318,12 @@ func cleanLabel(_ s: String) -> (String, Bool) {
     return (s, false)
 }
 
+struct FocusRing: View {
+    var body: some View {
+        RoundedRectangle(cornerRadius: 13).stroke(T.ink.opacity(0.55), style: StrokeStyle(lineWidth: 1, dash: [4, 3])).padding(-4)
+    }
+}
+
 struct Marker: View {
     let on: Bool
     let multi: Bool
@@ -379,9 +388,9 @@ struct OptionCard: View {
                 .transition(.opacity)
             }
         }
-        .background(RoundedRectangle(cornerRadius: 10).fill(on ? T.faint : hover.on ? T.ink.opacity(0.03) : Color.clear))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(on ? T.ink : hover.on ? T.ink.opacity(0.35) : T.border, lineWidth: on ? 2 : 1))
-        .overlay { if focused { RoundedRectangle(cornerRadius: 13).stroke(Color.accentColor.opacity(0.7), lineWidth: 3).padding(-3) } }
+        .background(RoundedRectangle(cornerRadius: 10).fill(on ? Color.accentColor.opacity(0.08) : hover.on ? T.ink.opacity(0.03) : Color.clear))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(on ? Color.accentColor : hover.on ? T.ink.opacity(0.35) : T.border, lineWidth: on ? 2 : 1))
+        .overlay { if focused { FocusRing() } }
         .contentShape(Rectangle())
         .onHover { h in withAnimation(Motion.quick) { hover.on = h } }
         .onTapGesture {
@@ -424,9 +433,9 @@ struct OtherCard: View {
             }
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 10).fill(on ? T.faint : Color.clear))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(on ? T.ink : T.border, lineWidth: on ? 2 : 1))
-        .overlay { if call.kbFocus[i] == oi { RoundedRectangle(cornerRadius: 13).stroke(Color.accentColor.opacity(0.7), lineWidth: 3).padding(-3) } }
+        .background(RoundedRectangle(cornerRadius: 10).fill(on ? Color.accentColor.opacity(0.08) : Color.clear))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(on ? Color.accentColor : T.border, lineWidth: on ? 2 : 1))
+        .overlay { if call.kbFocus[i] == oi { FocusRing() } }
         .contentShape(Rectangle())
         .onTapGesture { call.kbFocus[i] = nil; if !on || multi { animate { call.select(i, oi) } } }
         .accessibilityElement(children: .contain)
@@ -439,33 +448,41 @@ struct NoteBox: View {
     let i: Int
     var body: some View {
         let st = call.q[i]
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: "square.and.pencil")
-                Text("Note for the agent").fontWeight(.semibold)
-                Text("optional").foregroundColor(T.muted)
-            }
-            AttachArea(call: call, key: "q\(i).note", text: Binding(get: { call.q[i].note }, set: { call.q[i].note = $0; call.noteTyped(i) }),
-                       placeholder: "Anything the agent should know about this answer…", minHeight: 44)
+        if st.note.isEmpty && !st.drafting && !call.noteOpen.contains(i) {
             HStack(spacing: 10) {
-                if st.drafted { Chip(text: "✦ Drafted from your chat") }
-                else { Text("Paste an image with ⌘V").font(.caption).foregroundColor(T.muted) }
+                Button { withAnimation(Motion.quick) { _ = call.noteOpen.insert(i) } } label: {
+                    HStack(spacing: 6) { Image(systemName: "plus"); Text("Note for the agent") }
+                }.buttonStyle(.plain).foregroundColor(T.muted).disabled(!call.live)
+                Text("·").foregroundColor(T.muted)
+                DraftLink(call: call, i: i) { draft() }
                 Spacer()
-                if st.drafting {
-                    ProgressView().controlSize(.small)
-                    Text("drafting…").foregroundColor(T.muted)
-                } else if st.drafted {
-                    if st.noteBackup != nil { LinkButton(title: "↩ Undo") { call.undoDraft(i) } }
-                    LinkButton(title: "✦ Draft again") { draft() }
-                } else {
-                    DraftLink(call: call, i: i) { draft() }
+            }.padding(.vertical, 4)
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: "square.and.pencil")
+                    Text("Note for the agent").fontWeight(.semibold)
+                    Text("optional").foregroundColor(T.muted)
+                }
+                AttachArea(call: call, key: "q\(i).note", text: Binding(get: { call.q[i].note }, set: { call.q[i].note = $0; call.noteTyped(i) }),
+                           placeholder: "Anything the agent should know. Paste an image with ⌘V.", minHeight: 44)
+                HStack(spacing: 10) {
+                    if st.drafted { Chip(text: "✦ Drafted from your chat") }
+                    Spacer()
+                    if st.drafting {
+                        ProgressView().controlSize(.small)
+                        Text("drafting…").foregroundColor(T.muted)
+                    } else if st.drafted {
+                        if st.noteBackup != nil { LinkButton(title: "↩ Undo") { call.undoDraft(i) } }
+                        LinkButton(title: "✦ Draft again") { draft() }
+                    } else {
+                        DraftLink(call: call, i: i) { draft() }
+                    }
                 }
             }
-            Text("The agent reads the note together with the answer, so it can add what a choice cannot say.")
-                .font(.callout).foregroundColor(T.muted)
+            .padding(12)
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(T.border))
         }
-        .padding(12)
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(T.border))
     }
 
     func draft() {
