@@ -25,7 +25,7 @@ BUILD=$WORK/build
 mkdir -p "$BUILD"
 cp -R "$SRC/gui/." "$BUILD/"
 rm -rf "$BUILD/Huddle.app"
-sh "$BUILD/build.sh" >/dev/null
+sh "$BUILD/build.sh" >"$WORK/build.log" 2>&1 || { cat "$WORK/build.log" >&2; echo "Build failed." >&2; exit 1; }
 
 mkdir -p "$DEST"
 pkill -x Huddle 2>/dev/null || true
