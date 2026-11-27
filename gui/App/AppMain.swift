@@ -2,6 +2,19 @@ import SwiftUI
 import AppKit
 import Combine
 
+/// Without this the click that raises a background window is swallowed, so the first click on an option does nothing.
+final class FirstMouseHostingView<V: View>: NSHostingView<V> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
+/// Moves the caret into the named text field once SwiftUI has put it on screen.
+func focusField(_ key: String) {
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+        guard let w = NSApp.keyWindow, let f = AppDelegate.field(key, in: w.contentView) else { return }
+        w.makeFirstResponder(f)
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
     let store = Store()
     var window: NSWindow!
@@ -34,6 +47,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             }
             guard let c = chat() else { return false }
             window.makeFirstResponder(c)
+            return true
+        case 45:
+            if field != nil { return false }
+            call.noteOpen.insert(call.tab)
+            focusField("q\(call.tab).note")
             return true
         case 126, 125, 49:
             if let f = field {
@@ -82,7 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         window.minSize = NSSize(width: 1000, height: 560)
         window.delegate = self
         window.isReleasedWhenClosed = false
-        window.contentView = NSHostingView(rootView: RootView(store: store))
+        window.contentView = FirstMouseHostingView(rootView: RootView(store: store))
         window.center()
 
         status = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)

@@ -305,6 +305,7 @@ struct QuestionView: View {
             animate {
                 if !multi && call.q[i].picked.contains(f) { call.clear(i) } else { call.select(i, f) }
             }
+            if f == call.otherIndex(i) && call.q[i].picked.contains(f) { focusField("q\(i).other") }
             return true
         default: return false
         }
@@ -395,7 +396,7 @@ struct OptionCard: View {
         .onHover { h in withAnimation(Motion.quick) { hover.on = h } }
         .onTapGesture {
             call.kbFocus[i] = nil
-            if multi { animate { call.q[i].previewOpen = open ? nil : (o.preview != nil ? oi : nil) } } else { pick() }
+            if multi && o.preview != nil { animate { call.q[i].previewOpen = open ? nil : oi } } else { pick() }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(label)\(o.description.map { ". " + $0 } ?? "")\(on ? ", selected" : "")")
@@ -437,7 +438,11 @@ struct OtherCard: View {
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(on ? Color.accentColor : T.border, lineWidth: on ? 2 : 1))
         .overlay { if call.kbFocus[i] == oi { FocusRing() } }
         .contentShape(Rectangle())
-        .onTapGesture { call.kbFocus[i] = nil; if !on || multi { animate { call.select(i, oi) } } }
+        .onTapGesture {
+            call.kbFocus[i] = nil
+            if !on || multi { animate { call.select(i, oi) } }
+            if !on { focusField("q\(i).other") }
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Something else\(on ? ", selected" : "")")
     }
@@ -450,7 +455,7 @@ struct NoteBox: View {
         let st = call.q[i]
         if st.note.isEmpty && !st.drafting && !call.noteOpen.contains(i) {
             HStack(spacing: 10) {
-                Button { withAnimation(Motion.quick) { _ = call.noteOpen.insert(i) } } label: {
+                Button { withAnimation(Motion.quick) { _ = call.noteOpen.insert(i) }; focusField("q\(i).note") } label: {
                     HStack(spacing: 6) { Image(systemName: "plus"); Text("Note for the agent") }
                 }.buttonStyle(.plain).foregroundColor(T.muted).disabled(!call.live)
                 Text("·").foregroundColor(T.muted)
