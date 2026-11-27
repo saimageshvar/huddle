@@ -3,6 +3,7 @@
 import Foundation
 
 setvbuf(stdout, nil, _IOLBF, 0)
+if let cmd = CommandLine.arguments.dropFirst().first, ["setup", "uninstall", "status", "help", "--help", "-h"].contains(cmd) { runCLI(cmd) }
 let stdinData = FileHandle.standardInput.readDataToEndOfFile()
 
 func fileText(_ path: String) -> String? { try? String(contentsOfFile: path, encoding: .utf8) }
@@ -26,8 +27,8 @@ func delegateToTUI() -> Never {
     exit(p.terminationStatus)
 }
 
-let ui = (ProcessInfo.processInfo.environment["HUDDLE_UI"] ?? fileText(huddleHome + "/ui") ?? "tui").trimmingCharacters(in: .whitespacesAndNewlines)
-if ui != "gui" { delegateToTUI() }
+let ui = (ProcessInfo.processInfo.environment["HUDDLE_UI"] ?? fileText(huddleHome + "/ui") ?? "gui").trimmingCharacters(in: .whitespacesAndNewlines)
+if ui == "tui" { delegateToTUI() }
 
 func stepAside() -> Bool {
     let home = NSHomeDirectory()

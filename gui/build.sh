@@ -5,7 +5,7 @@ cd "$(dirname "$0")"
 A=Huddle.app/Contents
 mkdir -p $A/MacOS
 swiftc -parse-as-library -O Shared/Wire.swift App/*.swift -o $A/MacOS/Huddle
-swiftc -O Shared/Wire.swift Hook/main.swift -o $A/MacOS/huddle-hook
+swiftc -O Shared/Wire.swift Hook/*.swift -o $A/MacOS/huddle-hook
 mkdir -p $A/Resources
 I=$(mktemp -d)/AppIcon.iconset; mkdir -p $I; R=Resources/icon
 cp $R/huddle-icon-16.png $I/icon_16x16.png; cp $R/huddle-icon-32.png $I/icon_16x16@2x.png; cp $R/huddle-icon-32.png $I/icon_32x32.png
