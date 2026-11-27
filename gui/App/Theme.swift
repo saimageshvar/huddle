@@ -217,7 +217,6 @@ struct AttachArea: View {
     var placeholder = ""
     var minHeight: CGFloat = 60
     var maxHeight: CGFloat = 160
-    var bordered = true
     var submitOnEnter = false
     var onSubmit: (() -> Void)? = nil
 
@@ -254,7 +253,7 @@ struct AttachArea: View {
                      key: key)
         }
         .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
-        .overlay { if bordered { RoundedRectangle(cornerRadius: 8).stroke(T.border) } }
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(T.border))
     }
 }
 

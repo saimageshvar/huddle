@@ -465,7 +465,7 @@ struct NoteBox: View {
                     Text("optional").foregroundColor(T.muted)
                 }
                 AttachArea(call: call, key: "q\(i).note", text: Binding(get: { call.q[i].note }, set: { call.q[i].note = $0; call.noteTyped(i) }),
-                           placeholder: "Anything the agent should know. Paste an image with ⌘V.", minHeight: 44, bordered: false)
+                           placeholder: "Anything the agent should know. Paste an image with ⌘V.", minHeight: 44)
                 HStack(spacing: 10) {
                     if st.drafted { Chip(text: "✦ Drafted from your chat") }
                     Spacer()
