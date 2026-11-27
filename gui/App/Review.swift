@@ -28,9 +28,9 @@ struct ReviewRow: View {
         let multi = q.multiSelect ?? false
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top) {
-                Text("\(i + 1)").frame(width: 26, height: 26).overlay(Circle().stroke(T.border))
+                Text("\(i + 1)").foregroundColor(T.muted).frame(width: 26, height: 26).background(Circle().fill(T.ink.opacity(0.06)))
                 VStack(alignment: .leading, spacing: 3) {
-                    HStack { Text(call.header(i)).fontWeight(.semibold); Chip(text: multi ? "Choose any" : "Choose one") }
+                    HStack(spacing: 6) { Text(call.header(i)).fontWeight(.semibold); Text("· " + (multi ? "Choose any" : "Choose one")).font(.callout).foregroundColor(T.muted) }
                     if call.answered(i) {
                         Text(call.answerText(i)).fixedSize(horizontal: false, vertical: true)
                     } else {
@@ -38,7 +38,12 @@ struct ReviewRow: View {
                     }
                 }
                 Spacer()
-                OutlineButton(title: editing ? "Done" : (call.answered(i) ? "Edit" : "Answer"), icon: call.answered(i) || editing ? "pencil" : nil) { animate { toggle(i) } }
+                Button { animate { toggle(i) } } label: {
+                    HStack(spacing: 6) {
+                        if call.answered(i) || editing { Image(systemName: "pencil") }
+                        Text(editing ? "Done" : (call.answered(i) ? "Edit" : "Answer"))
+                    }.foregroundColor(T.muted).padding(.horizontal, 10).padding(.vertical, 6).hoverTint()
+                }.buttonStyle(.plain)
             }
             if editing {
                 Divider()
@@ -46,7 +51,9 @@ struct ReviewRow: View {
                     let on = call.q[i].picked.contains(oi)
                     Button { animate { call.select(i, oi) } } label: {
                         HStack { Marker(on: on, multi: multi); Text(cleanLabel(q.options[oi].label).0); Spacer() }
-                            .padding(10).overlay(RoundedRectangle(cornerRadius: 8).stroke(on ? T.ink : T.border, lineWidth: on ? 2 : 1))
+                            .padding(10)
+                            .background(RoundedRectangle(cornerRadius: 8).fill(on ? Color.accentColor.opacity(0.08) : T.ink.opacity(0.04)))
+                            .overlay { if on { RoundedRectangle(cornerRadius: 8).stroke(Color.accentColor, lineWidth: 1.5) } }
                     }.buttonStyle(.plain)
                 }
                 OtherCard(call: call, i: i)
@@ -61,15 +68,12 @@ struct ReviewRow: View {
                 HStack(spacing: 12) {
                     LinkButton(title: "Add note") { call.reviewEditing.insert(i) }
                     DraftLink(call: call, i: i) { call.draftNote(i) }
-                    if !call.threads[i].isEmpty {
-                        Text("Asks before replacing your note, and you can undo.").font(.callout).foregroundColor(T.muted)
-                    }
                 }
             }
         }
         .padding(14)
         .overlay(RoundedRectangle(cornerRadius: 10)
-            .stroke(editing ? T.ink : T.border, style: StrokeStyle(lineWidth: editing ? 2 : 1, dash: call.answered(i) ? [] : [5, 3])))
+            .stroke(editing ? Color.accentColor : T.border, style: StrokeStyle(lineWidth: editing ? 1.5 : 1, dash: call.answered(i) ? [] : [5, 3])))
     }
 
     func toggle(_ i: Int) {
